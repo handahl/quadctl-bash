@@ -3,7 +3,7 @@
 # FILE: quadctl_shim
 # PATH: src/quadctl_shim
 # PROJECT: quadctl
-# VERSION: 11.1.0
+# VERSION: 11.2.0
 # AUTHOR: SAC-CP (v2.1)
 # DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
 # ==============================================================================
@@ -67,7 +67,7 @@ parse_filter() {
 }
 
 case "$cmd" in
-    # --- INSPECTION & EDITING (New v11.1) ---
+    # --- INSPECTION & EDITING ---
     cat)
         source "${INSTALL_ROOT}/src/logic/interact.bash"
         execute_cat "${1:-missing}" "${2:-}"
@@ -94,7 +94,7 @@ case "$cmd" in
         ;;
     deploy|sync)
         source "${INSTALL_ROOT}/src/logic/deploy.bash"
-        # Default to dry-run if not specified, for safety
+            # Default to dry-run if not specified, for safety
         execute_deploy "${1:-dry-run}"
         ;;
     doctor)
@@ -102,19 +102,26 @@ case "$cmd" in
         execute_doctor
         ;;
     migrate)
-        # [NEW] v11.0.0: Prefix Migration Logic
+        # Prefix Migration Logic
         source "${INSTALL_ROOT}/src/logic/migrate.bash"
         execute_prefix_migration "$@"
         ;;
         
+    # --- UTILITIES ---
+    dr|daemon-reload)
+        log_info "Reloading systemd user daemon..."
+        systemctl --user daemon-reload
+        log_success "Daemon reloaded."
+        ;;
+        
     # --- SYSTEM CONTROL ---
-        start|stop|restart|reload|logs|enable|disable|mask|unmask)
+    start|stop|restart|reload|logs|enable|disable|mask|unmask)
         source "${INSTALL_ROOT}/src/logic/control.bash"
         execute_control "$cmd" "${1:-}"
         ;;
-
-   # --- META ---
-       help|--help|-h)
+        
+    # --- META ---
+    help|--help|-h)
         source "${INSTALL_ROOT}/src/ui/help.bash"
         show_help
         ;;
