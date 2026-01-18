@@ -3,7 +3,7 @@
 # FILE: quadctl_shim
 # PATH: src/quadctl_shim
 # PROJECT: quadctl
-# VERSION: 11.5.0
+# VERSION: 11.6.0
 # AUTHOR: SAC-CP (v2.1)
 # DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
 # ==============================================================================
@@ -67,8 +67,6 @@ case "$cmd" in
         source "${INSTALL_ROOT}/src/logic/interact.bash"
         execute_edit "${1:-missing}" "${2:-}"
         ;;
-        
-    # --- CORE LOGIC ---
     tree)
         source "${INSTALL_ROOT}/src/logic/tree.bash"
         execute_tree_view
@@ -78,11 +76,8 @@ case "$cmd" in
         execute_audit
         ;;
     status|s|qs)
-        # BIFURCATION LOGIC:
-        # If arg provided AND it isn't 'all'/'a', treat it as a unit name lookup
         if [[ -n "${1:-}" ]] && [[ ! "${1:-}" =~ ^(all|a|-a|--all)$ ]]; then
             source "${INSTALL_ROOT}/src/logic/control.bash"
-            # Route 'quadctl status foo' -> systemctl status prefix-foo
             execute_control "status" "$1"
         else
             source "${INSTALL_ROOT}/src/logic/matrix.bash"
@@ -102,8 +97,6 @@ case "$cmd" in
         source "${INSTALL_ROOT}/src/logic/migrate.bash"
         execute_prefix_migration "$@"
         ;;
-        
-    # --- UTILITIES ---
     dr|daemon-reload)
         log_info "Reloading systemd user daemon..."
         systemctl --user daemon-reload
@@ -113,15 +106,11 @@ case "$cmd" in
         source "${INSTALL_ROOT}/src/logic/deploy.bash"
         execute_deploy "dry-run"
         ;;
-        
-    # --- SYSTEM CONTROL ---
-    # We explicitly add 'status' here too, just in case, though the case above catches it.
-    start|stop|restart|reload|logs|enable|disable|mask|unmask)
+    # Expanded Control Routing
+    start|stop|restart|reload|logs|enable|disable|mask|unmask|depends-on|depended-by)
         source "${INSTALL_ROOT}/src/logic/control.bash"
         execute_control "$cmd" "${1:-}"
         ;;
-        
-    # --- META ---
     help|--help|-h)
         source "${INSTALL_ROOT}/src/ui/help.bash"
         show_help

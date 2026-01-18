@@ -3,97 +3,90 @@
 # FILE: tree.bash
 # PATH: src/logic/tree.bash
 # PROJECT: quadctl
-# VERSION: 10.6.5
+# VERSION: 11.6.0
 # AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Hierarchical visualization of system state (Scoped).
+# DESCRIPTION: Hierarchical view of Pods and Containers with advanced coloring.
 # ==============================================================================
-
-source "${INSTALL_ROOT}/src/api/podman.bash"
 
 execute_tree_view() {
     log_info "Generating Topology Tree..."
+    echo ""
 
-    local raw_json
-    # We need the raw list, not the map, to group efficiently with jq
-    raw_json=$(query_podman_socket "/containers/json?all=true")
+    # 1. FETCH DATA (Pods & Containers)
+    # Get JSON output from podman for rich metadata
+    local pod_data
+    pod_data=$(podman pod ps --format json)
+    local ctr_data
+    ctr_data=$(podman ps -a --format json)
 
-    if [[ -z "$raw_json" || "$raw_json" == "[]" ]]; then
-        echo "No containers found."
-        return
-    fi
-
-    # [ARCH-FIX] Filter by Q_ARCH_PREFIX
-    # We only want to show containers that match our governance prefix.
-    # We use jq 'select' to filter first, then group.
-    
-    echo "$raw_json" | jq -r --arg prefix "$Q_ARCH_PREFIX" '
-        map(select(.Names[0] | sub("^/";"") | startswith($prefix))) |
-        group_by(.PodName)[] | 
-        { 
-            pod: (.[0].PodName // "standalone"), 
-            items: . 
-        } | @base64' | \
-    while read -r pod_group_b64; do
-        
-        # Decode the group
-        local pod_group
-        pod_group=$(echo "$pod_group_b64" | base64 -d)
-        
-        local pod_name
-        pod_name=$(echo "$pod_group" | jq -r '.pod')
-        
-        # --- RENDER POD HEADER ---
-        if [[ "$pod_name" == "standalone" || -z "$pod_name" ]]; then
-            echo -e "\n${Q_COLOR_BLUE}[Standalone Containers]${Q_COLOR_RESET}"
-        else
-            # Strip prefix for display cleanliness if it exists
-            local display_name="${pod_name#$Q_ARCH_PREFIX}"
-            echo -e "\n${Q_COLOR_PURP}[POD] ${display_name}${Q_COLOR_RESET}"
+    # 2. HELPER: COLORIZE IMAGE TAGS
+    colorize_image() {
+        local img_str="$1"
+        # Extract tag (everything after last colon, or 'latest' if none)
+        local tag="latest"
+        if [[ "$img_str" == *":"* ]]; then
+            tag="${img_str##*:}"
         fi
 
-        # --- RENDER CONTAINERS ---
-        echo "$pod_group" | jq -c '.items[]' | while read -r ctr; do
-            local name state status image networks mounts
-            name=$(echo "$ctr" | jq -r '.Names[0] | sub("^/";"")')
-            
-            # Strip prefix for display
-            local display_name="${name#$Q_ARCH_PREFIX}"
+        local color="$Q_COLOR_RESET"
 
-            state=$(echo "$ctr" | jq -r '.State')
-            status=$(echo "$ctr" | jq -r '.Status')
-            image=$(echo "$ctr" | jq -r '.Image')
-            
-            # Extract Image Tag
-            if [[ "$image" == *":"* ]]; then image="${image##*:}"; else image="latest"; fi
-            
-            # Extract Networks (Keys of NetworkSettings.Networks)
-            networks=$(echo "$ctr" | jq -r '.NetworkSettings.Networks | keys | join(", ")')
-            
-            # Extract Mounts (Volumes) - Types: volume, bind
-            mounts=$(echo "$ctr" | jq -r '.Mounts[]? | select(.Type=="volume") | .Name')
+        if [[ "$tag" == "latest" ]]; then
+            color="$Q_COLOR_GREEN"
+        elif [[ "$tag" =~ ^v[0-9] ]] || [[ "$tag" =~ ^[0-9]+(\.[0-9]+)+ ]]; then
+            # "v3.6", "2.0.22" -> Purple (Semantic / Specific)
+            color="\033[0;35m" # Purple
+        elif [[ "$tag" =~ ^[0-9]+-[a-zA-Z]+ ]] || [[ "$tag" =~ ^v[0-9]+$ ]]; then
+             # "18-bookworm", "v3" -> Blue (Major/Stable)
+             color="$Q_COLOR_BLUE"
+        elif [[ "$tag" =~ ^sha256: ]] || [[ "$tag" =~ ^@sha ]]; then
+             # SHA hashes -> Orange
+             color="\033[0;33m" # Orange/Yellow
+             # Abbreviate SHA for display
+             tag="${tag:0:12}..."
+        else
+             # Fallback -> Blue? Or Reset?
+             color="$Q_COLOR_BLUE"
+        fi
 
-            # Colorize State
-            local c_icon="${Q_COLOR_RED}●${Q_COLOR_RESET}"
-            [[ "$state" == "running" ]] && c_icon="${Q_COLOR_GREEN}●${Q_COLOR_RESET}"
-            [[ "$state" == "exited" ]] && c_icon="${Q_COLOR_GREY}○${Q_COLOR_RESET}"
+        echo -e "${color}${tag}${Q_COLOR_RESET}"
+    }
 
-            # Print Container Node
-            echo -e "  ├── ${c_icon} ${Q_COLOR_BOLD}${display_name}${Q_COLOR_RESET} (${status})"
-            
-            # Print Details (Image, Network, Volume)
-            echo -e "  │    ├── ${Q_COLOR_YELLOW}img${Q_COLOR_RESET} : ${image}"
-            if [[ -n "$networks" ]]; then
-                echo -e "  │    ├── ${Q_COLOR_BLUE}net${Q_COLOR_RESET} : ${networks}"
-            fi
-            if [[ -n "$mounts" ]]; then
-                # Loop over mounts if multiple
-                while read -r mnt; do
-                    [[ -n "$mnt" ]] && echo -e "  │    ├── ${Q_COLOR_GREEN}vol${Q_COLOR_RESET} : ${mnt}"
-                done <<< "$mounts"
-            fi
-            # Visual padding for next item
-            echo -e "  │"
-        done
+    # 3. HELPER: NETWORK EXTRACTION
+    get_networks() {
+        local ctr_name="$1"
+        # Parse JSON for Networks
+        echo "$ctr_data" | jq -r --arg name "$ctr_name" '.[] | select(.Names[] | contains($name)) | .Networks // "host"'
+    }
+
+    # 4. RENDER STANDALONE CONTAINERS
+    echo "[Standalone Containers]"
+    
+    # Filter containers that do NOT belong to a pod
+    # (Podman JSON has "Pod" field, empty if standalone)
+    echo "$ctr_data" | jq -c '.[] | select(.Pod == "" or .Pod == null)' | while read -r ctr; do
+        local name=$(echo "$ctr" | jq -r '.Names[0]')
+        local status=$(echo "$ctr" | jq -r '.Status')
+        local image=$(echo "$ctr" | jq -r '.Image')
+        
+        # Calculate Uptime string
+        local uptime_str="-"
+        if [[ "$status" =~ Up\ ([^)]+) ]]; then
+            uptime_str="${BASH_REMATCH[1]}"
+        fi
+
+        # Colorize Image
+        local pretty_tag
+        pretty_tag=$(colorize_image "$image")
+        
+        # Networks
+        local nets
+        nets=$(echo "$ctr" | jq -r '.Networks // "host"')
+
+        echo -e "  ├── ● ${Q_COLOR_RESET}${name} (${uptime_str})"
+        echo -e "  │    ├── img : ${pretty_tag}"
+        echo -e "  │    ├── net : ${nets}"
+        echo -e "  │"
     done
+    
     echo ""
 }
