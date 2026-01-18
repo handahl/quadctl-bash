@@ -2,7 +2,7 @@
 
 **Version:** 10.6.0
 
-**Architecture:** SAC-CP (v2.1)
+**Architecture:** coda.constraints / CLIG / hanlab
 
 **License:** tbd
 
