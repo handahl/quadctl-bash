@@ -3,8 +3,8 @@
 # FILE: deps.bash
 # PATH: src/core/deps.bash
 # PROJECT: quadctl
-# VERSION: 10.7.10
-# DATE: 2026-01-18
+# VERSION: 11.0.1
+# AUTHOR: SAC-CP (v2.1)
 # DESCRIPTION: Runtime dependency verification with Semantic Version enforcement.
 # ==============================================================================
 
@@ -80,6 +80,7 @@ check_runtime_dependencies() {
         log_warn "Your containers will stop when you log out."
         log_info "To enable: sudo loginctl enable-linger $USER"
         echo ""
+    fi
 
     # --------------------------------------------------------------------------
     # STRICT VERSION ENFORCEMENT (As per ai_restraints_master.md)

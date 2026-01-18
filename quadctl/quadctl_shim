@@ -1,33 +1,44 @@
 #!/usr/bin/env bash
 # ==============================================================================
-## FILE: quadctl_shim
-## PATH: src/quadctl_shim
-## PROJECT: quadctl
-## VERSION: 11.0.0
-## DATE: 2026-01-18
-## AUTHOR: SAC-CP (v2.1)
-## DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
+# FILE: quadctl_shim
+# PATH: src/quadctl_shim
+# PROJECT: quadctl
+# VERSION: 11.0.1
+# AUTHOR: SAC-CP (v2.1)
+# DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
 # ==============================================================================
 
 set -euo pipefail
 
-# 1. RESOLVE INSTALLATION ROOT
+# 1. RESOLVE INSTALLATION ROOT (ARCHITECTURAL FIX)
 # ------------------------------------------------------------------------------
-# Robust symlink resolution to find the 'src' directory relative to this script.
+# We resolve the physical location of the script, then determine the project root.
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do 
   DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
   SOURCE="$(readlink "$SOURCE")"
   [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" 
 done
-readonly INSTALL_ROOT="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+SCRIPT_DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+
+# Heuristic: Where is 'src'?
+# If this script is in /.../quadctl/, src is in ./src
+# If this script is in /.../quadctl/bin/, src is in ../src
+if [[ -d "${SCRIPT_DIR}/src" ]]; then
+    readonly INSTALL_ROOT="${SCRIPT_DIR}"
+elif [[ -d "${SCRIPT_DIR}/../src" ]]; then
+    readonly INSTALL_ROOT="$(dirname "${SCRIPT_DIR}")"
+else
+    log_err "Could not locate 'src' directory from ${SCRIPT_DIR}"
+    exit 1
+fi
 
 # 2. BOOTSTRAP ENVIRONMENT
 # ------------------------------------------------------------------------------
 if [[ -f "${INSTALL_ROOT}/src/core/env.bash" ]]; then
     source "${INSTALL_ROOT}/src/core/env.bash"
 else
-    echo "!! [FATAL] Core environment missing at ${INSTALL_ROOT}/src/core/env.bash"
+    log_err "Core environment missing at ${INSTALL_ROOT}/src/core/env.bash"
     exit 1
 fi
 
@@ -35,8 +46,7 @@ fi
 # ------------------------------------------------------------------------------
 source "${INSTALL_ROOT}/src/core/deps.bash"
 
-# Skip heavy dependency checks for help/version/shell commands to keep them snappy
-# Uses ${1:-} to prevent unbound variable errors if no args are provided
+# Skip heavy dependency checks for help/version/shell commands
 if [[ ! "${1:-}" =~ ^(-h|--help|-v|--version|shell)$ ]]; then
     check_runtime_dependencies
 fi
