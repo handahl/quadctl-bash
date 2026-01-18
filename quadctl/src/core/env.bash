@@ -51,7 +51,7 @@ if [[ -t 1 ]]; then
     export Q_COLOR_YELLOW=$'\033[0;33m' 
     export Q_COLOR_BLUE=$'\033[0;34m'
     export Q_COLOR_PURP=$'\033[0;35m'
-    export Q_COLOR_GREY=$'\033[1;30m'
+    export Q_COLOR_GREY=$'\033[0;30m'
     export Q_COLOR_BOLD=$'\033[1m'
     export Q_COLOR_RESET=$'\033[0m'
 else

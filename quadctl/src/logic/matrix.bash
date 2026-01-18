@@ -168,14 +168,14 @@ execute_matrix_view() {
         local c_state="$Q_COLOR_RESET"
         if [[ "$s_active" == "active" ]]; then c_state="$Q_COLOR_GREEN"; fi
         if [[ "$s_active" == "failed" ]]; then c_state="$Q_COLOR_RED"; fi
-        if [[ "$s_active" == "missing" ]]; then c_state="$Q_COLOR_GREY"; fi
+        if [[ "$s_active" == "standby" ]]; then c_state="$Q_COLOR_GREY"; fi
         
         # Sub-State Handling (Auto-Restart Red)
         local display_sub="$s_sub"
         local line_color=""
         
         if [[ "$s_sub" == "auto-restart" ]]; then
-            display_sub="auto-rst"
+            display_sub="loop"
             # Visual Requirement: The whole line should be red if auto-restarting
             line_color="$Q_COLOR_RED" 
             c_state="$Q_COLOR_RED" 
@@ -185,9 +185,9 @@ execute_matrix_view() {
 
         # Drift Coloring
         local c_drift="$Q_COLOR_RESET"
-        local d_val="synced"
+        local d_val="syncy"
         if [[ "$s_drift" == "yes" ]]; then 
-            d_val="drift"
+            d_val="drifty"
             c_drift="$Q_COLOR_YELLOW"
         fi
         if [[ "$s_active" == "missing" ]]; then
