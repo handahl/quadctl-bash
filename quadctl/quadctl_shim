@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# ==============================================================================
+## FILE: quadctl_shim
+## PATH: src/quadctl_shim
+## PROJECT: quadctl
+## VERSION: 11.0.0
+## DATE: 2026-01-18
+## AUTHOR: SAC-CP (v2.1)
+## DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
+# ==============================================================================
+
+set -euo pipefail
+
+# 1. RESOLVE INSTALLATION ROOT
+# ------------------------------------------------------------------------------
+# Robust symlink resolution to find the 'src' directory relative to this script.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do 
+  DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" 
+done
+readonly INSTALL_ROOT="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+
+# 2. BOOTSTRAP ENVIRONMENT
+# ------------------------------------------------------------------------------
+if [[ -f "${INSTALL_ROOT}/src/core/env.bash" ]]; then
+    source "${INSTALL_ROOT}/src/core/env.bash"
+else
+    echo "!! [FATAL] Core environment missing at ${INSTALL_ROOT}/src/core/env.bash"
+    exit 1
+fi
+
+# 3. DEPENDENCY CHECK
+# ------------------------------------------------------------------------------
+source "${INSTALL_ROOT}/src/core/deps.bash"
+
+# Skip heavy dependency checks for help/version/shell commands to keep them snappy
+# Uses ${1:-} to prevent unbound variable errors if no args are provided
+if [[ ! "${1:-}" =~ ^(-h|--help|-v|--version|shell)$ ]]; then
+    check_runtime_dependencies
+fi
+
+# 4. COMMAND ROUTING
+# ------------------------------------------------------------------------------
+cmd="${1:-status}"
+shift || true
+
+# Helper: Parse --type=foo or -t foo arguments
+parse_filter() {
+    local arg="${1:-}"
+    if [[ "$arg" == --type=* ]]; then
+        echo "${arg#*=}"
+    elif [[ "$arg" == "-t" ]]; then
+        echo "${2:-all}"
+    else
+        echo "all"
+    fi
+}
+
+case "$cmd" in
+    tree)
+        source "${INSTALL_ROOT}/src/logic/tree.bash"
+        execute_tree_view
+        ;;
+    audit)
+        source "${INSTALL_ROOT}/src/logic/audit.bash"
+        execute_audit
+        ;;
+    status|matrix|q)
+        source "${INSTALL_ROOT}/src/logic/matrix.bash"
+        # Pass filtering args if present
+        filter=$(parse_filter "${1:-}")
+        execute_matrix_view "$filter"
+        ;;
+    deploy|sync)
+        source "${INSTALL_ROOT}/src/logic/deploy.bash"
+        # Default to dry-run if not specified, for safety
+        execute_deploy "${1:-dry-run}"
+        ;;
+    doctor)
+        source "${INSTALL_ROOT}/src/logic/doctor.bash"
+        execute_doctor
+        ;;
+    migrate)
+        # [NEW] v11.0.0: Prefix Migration Logic
+        source "${INSTALL_ROOT}/src/logic/migrate.bash"
+        execute_prefix_migration "$@"
+        ;;
+    start|stop|restart|reload|logs|enable|disable|mask|unmask)
+        source "${INSTALL_ROOT}/src/logic/control.bash"
+        execute_control "$cmd" "${1:-}"
+        ;;
+    help|--help|-h)
+        source "${INSTALL_ROOT}/src/ui/help.bash"
+        show_help
+        ;;
+    version|--version|-v)
+        source "${INSTALL_ROOT}/src/ui/help.bash"
+        show_version
+        ;;
+    shell)
+        source "${INSTALL_ROOT}/src/logic/shell.bash"
+        execute_shell
+        ;;
+    *)
+        source "${INSTALL_ROOT}/src/ui/help.bash"
+        log_err "Unknown command: $cmd"
+        show_help
+        exit 1
+        ;;
+esac
