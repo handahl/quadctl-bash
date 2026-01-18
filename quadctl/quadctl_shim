@@ -3,7 +3,7 @@
 # FILE: quadctl_shim
 # PATH: src/quadctl_shim
 # PROJECT: quadctl
-# VERSION: 11.2.0
+# VERSION: 11.5.0
 # AUTHOR: SAC-CP (v2.1)
 # DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
 # ==============================================================================
@@ -11,8 +11,6 @@
 set -euo pipefail
 
 # 1. RESOLVE INSTALLATION ROOT
-# ------------------------------------------------------------------------------
-# We resolve the physical location of the script, then determine the project root.
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do 
   DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
@@ -21,7 +19,6 @@ while [ -h "$SOURCE" ]; do
 done
 SCRIPT_DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
 
-# Heuristic: Locate 'src' relative to the script location
 if [[ -d "${SCRIPT_DIR}/src" ]]; then
     readonly INSTALL_ROOT="${SCRIPT_DIR}"
 elif [[ -d "${SCRIPT_DIR}/../src" ]]; then
@@ -32,7 +29,6 @@ else
 fi
 
 # 2. BOOTSTRAP ENVIRONMENT
-# ------------------------------------------------------------------------------
 if [[ -f "${INSTALL_ROOT}/src/core/env.bash" ]]; then
     source "${INSTALL_ROOT}/src/core/env.bash"
 else
@@ -41,28 +37,23 @@ else
 fi
 
 # 3. DEPENDENCY CHECK
-# ------------------------------------------------------------------------------
 source "${INSTALL_ROOT}/src/core/deps.bash"
-
-# Skip heavy dependency checks for help/version/shell commands
-if [[ ! "${1:-}" =~ ^(-h|--help|-v|--version|shell)$ ]]; then
+if [[ ! "${1:-}" =~ ^(-h|--help|-v|--version|shell|s)$ ]]; then
     check_runtime_dependencies
 fi
 
 # 4. COMMAND ROUTING
-# ------------------------------------------------------------------------------
 cmd="${1:-status}"
 shift || true
 
-# Helper: Parse --type=foo or -t foo arguments
 parse_filter() {
     local arg="${1:-}"
     if [[ "$arg" == --type=* ]]; then
         echo "${arg#*=}"
-    elif [[ "$arg" == "-t" ]]; then
-        echo "${2:-all}"
-    else
+    elif [[ "$arg" =~ ^(-a|--all|all|a)$ ]]; then
         echo "all"
+    else
+        echo "standard"
     fi
 }
 
@@ -86,15 +77,21 @@ case "$cmd" in
         source "${INSTALL_ROOT}/src/logic/audit.bash"
         execute_audit
         ;;
-    status|matrix|q)
-        source "${INSTALL_ROOT}/src/logic/matrix.bash"
-        # Pass filtering args if present
-        filter=$(parse_filter "${1:-}")
-        execute_matrix_view "$filter"
+    status|s|qs)
+        # BIFURCATION LOGIC:
+        # If arg provided AND it isn't 'all'/'a', treat it as a unit name lookup
+        if [[ -n "${1:-}" ]] && [[ ! "${1:-}" =~ ^(all|a|-a|--all)$ ]]; then
+            source "${INSTALL_ROOT}/src/logic/control.bash"
+            # Route 'quadctl status foo' -> systemctl status prefix-foo
+            execute_control "status" "$1"
+        else
+            source "${INSTALL_ROOT}/src/logic/matrix.bash"
+            filter=$(parse_filter "${1:-}")
+            execute_matrix_view "$filter"
+        fi
         ;;
     deploy|sync)
         source "${INSTALL_ROOT}/src/logic/deploy.bash"
-            # Default to dry-run if not specified, for safety
         execute_deploy "${1:-dry-run}"
         ;;
     doctor)
@@ -102,7 +99,6 @@ case "$cmd" in
         execute_doctor
         ;;
     migrate)
-        # Prefix Migration Logic
         source "${INSTALL_ROOT}/src/logic/migrate.bash"
         execute_prefix_migration "$@"
         ;;
@@ -113,8 +109,13 @@ case "$cmd" in
         systemctl --user daemon-reload
         log_success "Daemon reloaded."
         ;;
+    dry)
+        source "${INSTALL_ROOT}/src/logic/deploy.bash"
+        execute_deploy "dry-run"
+        ;;
         
     # --- SYSTEM CONTROL ---
+    # We explicitly add 'status' here too, just in case, though the case above catches it.
     start|stop|restart|reload|logs|enable|disable|mask|unmask)
         source "${INSTALL_ROOT}/src/logic/control.bash"
         execute_control "$cmd" "${1:-}"
@@ -129,9 +130,9 @@ case "$cmd" in
         source "${INSTALL_ROOT}/src/ui/help.bash"
         show_version
         ;;
-    shell)
+    shell|s)
         source "${INSTALL_ROOT}/src/logic/shell.bash"
-        execute_shell
+        execute_shell "$@"
         ;;
     *)
         source "${INSTALL_ROOT}/src/ui/help.bash"

@@ -3,8 +3,7 @@
 # FILE: matrix.bash
 # PATH: src/logic/matrix.bash
 # PROJECT: quadctl
-# VERSION: 10.6.4
-# DATE: 2026-01-18
+# VERSION: 11.4.0
 # AUTHOR: SAC-CP (v2.1)
 # DESCRIPTION: High-Density Reconciliation Matrix (Union of Disk & Runtime).
 # ==============================================================================
@@ -33,29 +32,32 @@ calc_uptime() {
 }
 
 execute_matrix_view() {
-    local filter_type="${1:-all}"
-    log_info "Generating Quadlet Matrix (Union View)..."
+    local filter_type="${1:-standard}" # Default to standard (active/failed only)
+    
+    # Map shortcuts
+    if [[ "$filter_type" =~ ^(a|all)$ ]]; then filter_type="all"; fi
+
+    log_info "Generating Quadlet Matrix (${filter_type^} View)..."
 
     # 1. FETCH DATA
-    # --------------------------------------------------------------------------
     local sys_map pod_map
     sys_map=$(api_systemd_get_state_map)
     pod_map=$(get_containers_map)
 
     # 2. DISCOVER INTENT (Files on Disk)
-    # --------------------------------------------------------------------------
     local disk_units=()
     if [[ -d "$Q_CONFIG_DIR" ]]; then
         while IFS= read -r file; do
             local filename=$(basename "$file")
             local stem="${filename%.container}"
-            # Assumption: filename matches service name stem
-            disk_units+=("${stem}.service")
-        done < <(find "$Q_CONFIG_DIR" -maxdepth 1 -name "*.container")
+            # Only track containers/networks/volumes managed by us
+            if [[ "$filename" == "$Q_ARCH_PREFIX"* ]]; then
+                 disk_units+=("${stem}.service")
+            fi
+        done < <(find "$Q_CONFIG_DIR" -maxdepth 1 -name "*.container" -o -name "*.network" -o -name "*.volume")
     fi
 
     # 3. MERGE LISTS (Union: Disk + Systemd)
-    # --------------------------------------------------------------------------
     local runtime_keys
     runtime_keys=$(echo "$sys_map" | jq -r 'keys[]')
     
@@ -68,21 +70,19 @@ execute_matrix_view() {
     fi
 
     # 4. HEADER
-    # --------------------------------------------------------------------------
     printf "%-30s %-8s %-10s %-10s %-8s %-10s %-12s %s\n" \
         "UNIT" "DRIFT" "STATE" "SUB" "UPTIME" "HEALTH" "VER" "ROUTING"
     printf "%s\n" "----------------------------------------------------------------------------------------------------------------"
 
+    # Buffers for sorting
+    local lines_services=()
+    local lines_networks=()
+
     # 5. ITERATE
-    # --------------------------------------------------------------------------
     for unit in $all_units; do
-        if [[ "$unit" != "${Q_ARCH_PREFIX}"* ]]; then
-            continue
-        fi
+        if [[ "$unit" != "${Q_ARCH_PREFIX}"* ]]; then continue; fi
 
         # --- DATA EXTRACTION ---
-        
-        # Systemd Props
         local s_active s_sub s_drift s_ts
         if echo "$sys_map" | jq -e --arg k "$unit" 'has($k)' >/dev/null; then
             s_active=$(echo "$sys_map" | jq -r --arg k "$unit" '.[$k].active')
@@ -96,6 +96,15 @@ execute_matrix_view() {
             s_ts=""
         fi
 
+        # Filter Logic (Standard View hides inactive/exited unless failed/restarting)
+        if [[ "$filter_type" != "all" ]]; then
+            # Show if active, OR if failed, OR if auto-restart
+            if [[ "$s_active" == "inactive" && "$s_sub" != "failed" && "$s_sub" != "auto-restart" ]]; then
+                continue
+            fi
+            if [[ "$s_active" == "missing" ]]; then continue; fi
+        fi
+
         # Clean Names
         local clean_name="${unit#$Q_ARCH_PREFIX}"
         clean_name="${clean_name%.service}"
@@ -105,16 +114,14 @@ execute_matrix_view() {
         local pod_json
         pod_json=$(echo "$pod_map" | jq -r --arg n1 "$unit_stem" --arg n2 "$clean_name" '.[$n1] // .[$n2] // empty')
 
-        local p_status="-"
         local p_health="-"
         local p_image="-"
         local p_ports="-"
 
         if [[ -n "$pod_json" ]]; then
-            p_status="present"
-            
             local raw_status
             raw_status=$(echo "$pod_json" | jq -r '.Status // ""')
+            
             if [[ "$raw_status" == *"(healthy)"* ]]; then p_health="healthy"
             elif [[ "$raw_status" == *"(unhealthy)"* ]]; then p_health="unhealthy"
             elif [[ "$raw_status" == *"(starting)"* ]]; then p_health="starting"
@@ -143,31 +150,40 @@ execute_matrix_view() {
                 if [[ -n "$ports" ]]; then p_ports="○ $ports"; fi
             fi
         else
-            if [[ "$clean_name" == *"-network" ]]; then
-                p_image="-"
-                p_health="-"
+            # Handling Networks/Volumes or Missing
+            if [[ "$unit" == *"-network.service" ]]; then
                 p_ports="Network"
             elif [[ "$s_active" == "missing" ]]; then
-                p_image="-"
-                p_health="unrealized"
+                p_health="standby"
             else
-                p_image="-"
                 p_health="missing"
             fi
         fi
 
         # --- FORMATTING & COLORS ---
-
         local uptime_str
         uptime_str=$(calc_uptime "$s_ts")
 
-        # Color: State
+        # State Coloring
         local c_state="$Q_COLOR_RESET"
         if [[ "$s_active" == "active" ]]; then c_state="$Q_COLOR_GREEN"; fi
         if [[ "$s_active" == "failed" ]]; then c_state="$Q_COLOR_RED"; fi
         if [[ "$s_active" == "missing" ]]; then c_state="$Q_COLOR_GREY"; fi
         
-        # Color: Drift
+        # Sub-State Handling (Auto-Restart Red)
+        local display_sub="$s_sub"
+        local line_color=""
+        
+        if [[ "$s_sub" == "auto-restart" ]]; then
+            display_sub="auto-rst"
+            # Visual Requirement: The whole line should be red if auto-restarting
+            line_color="$Q_COLOR_RED" 
+            c_state="$Q_COLOR_RED" 
+        elif [[ "$s_active" == "failed" ]]; then
+            line_color="$Q_COLOR_RED"
+        fi
+
+        # Drift Coloring
         local c_drift="$Q_COLOR_RESET"
         local d_val="synced"
         if [[ "$s_drift" == "yes" ]]; then 
@@ -179,23 +195,48 @@ execute_matrix_view() {
             c_drift="$Q_COLOR_GREY"
         fi
 
-        # Color: Health
+        # Health Coloring
         local c_health="$Q_COLOR_RESET"
         if [[ "$p_health" == "healthy" ]]; then c_health="$Q_COLOR_GREEN"; fi
         if [[ "$p_health" == "unhealthy" ]]; then c_health="$Q_COLOR_RED"; fi
         if [[ "$p_health" == "missing" ]]; then c_health="$Q_COLOR_YELLOW"; fi
         if [[ "$p_health" == "unrealized" ]]; then c_health="$Q_COLOR_GREY"; fi
 
-        printf "%-30s %b%-8s%b %b%-10s%b %-10s %-8s %b%-10s%b %-12s %s\n" \
-            "$clean_name" \
-            "$c_drift" "$d_val" "$Q_COLOR_RESET" \
-            "$c_state" "$s_active" "$Q_COLOR_RESET" \
-            "${s_sub}" \
-            "$uptime_str" \
-            "$c_health" "$p_health" "$Q_COLOR_RESET" \
-            "$p_image" \
-            "$p_ports"
+        # Construct Line
+        local line_output=""
+        
+        # If line_color is set (critical state), override all colors
+        if [[ -n "$line_color" ]]; then
+            line_output=$(printf "%b%-30s %-8s %-10s %-10s %-8s %-10s %-12s %s%b" \
+                "$line_color" "$clean_name" "$d_val" "$s_active" "$display_sub" "$uptime_str" "$p_health" "$p_image" "$p_ports" "$Q_COLOR_RESET")
+        else
+            line_output=$(printf "%-30s %b%-8s%b %b%-10s%b %-10s %-8s %b%-10s%b %-12s %s" \
+                "$clean_name" \
+                "$c_drift" "$d_val" "$Q_COLOR_RESET" \
+                "$c_state" "$s_active" "$Q_COLOR_RESET" \
+                "$display_sub" \
+                "$uptime_str" \
+                "$c_health" "$p_health" "$Q_COLOR_RESET" \
+                "$p_image" \
+                "$p_ports")
+        fi
 
+        # Sort into Buffers
+        if [[ "$p_ports" == "Network" ]]; then
+            lines_networks+=("$line_output")
+        else
+            lines_services+=("$line_output")
+        fi
     done
+
+    # 6. PRINT BUFFERED OUTPUT
+    for l in "${lines_services[@]}"; do echo "$l"; done
+    if [[ "$filter_type" == "all" ]]; then
+        for l in "${lines_networks[@]}"; do echo "$l"; done
+    fi
+
+    # 7. HINTS FOOTER
+    echo "----------------------------------------------------------------------------------------------------------------"
+    echo -e "Hints: ${Q_COLOR_YELLOW}shell/s${Q_COLOR_RESET} shell | ${Q_COLOR_YELLOW}all/a${Q_COLOR_RESET} all services | ${Q_COLOR_YELLOW}dr${Q_COLOR_RESET} daemon-reload | ${Q_COLOR_YELLOW}dry${Q_COLOR_RESET} generator dry-run"
     echo ""
 }
