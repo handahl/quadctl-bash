@@ -13,212 +13,111 @@ set -euo pipefail
 # Internal helper to handle systemd/quadlet path specifiers.
 # ------------------------------------------------------------------------------
 
-_expand_quadlet_path() {
-local raw_path="$1"
-
-Handle %h (systemd home) and ~ (shell home)
-
-local expanded="${raw_path/%h/$HOME}"
-expanded="${expanded/#~/$HOME}"
-echo "$expanded"
-}
-
-# ------------------------------------------------------------------------------
-# Scans files for common secret patterns.
-# ------------------------------------------------------------------------------
-
-scan_for_secrets() {
-local target_dir="$1"
-local fail_count=0
-
-# Requirement Check
-if ! command -v grep &> /dev/null; then
-    log_err "Required tool 'grep' not found."
-    return 1
-fi
-
-log_info "Scanning for hardcoded secrets in ${target_dir}..."
-
-local patterns=(
-    "(?i)(password|secret|token|key)\s*[:=]\s*['\"][^'\"]{3,}['\"]"
-    "-----BEGIN .* PRIVATE KEY-----"
-)
-
-for pat in "${patterns[@]}"; do
-    if grep -rnP "$pat" "$target_dir" --include="*.container" --include="*.service" --exclude-dir=".git"; then
-        echo -e "${Q_COLOR_RED}!! [SECURITY] Potential secret detected matching: $pat${Q_COLOR_RESET}"
-        ((fail_count++))
-    fi
-done
-
-if (( fail_count > 0 )); then
-    log_err "Found $fail_count potential security violations."
-    return 1
-fi
-log_success "No obvious hardcoded secrets detected."
-return 0
-}
-
-# ------------------------------------------------------------------------------
-# Validates EnvironmentFile existence with path expansion.
-# ------------------------------------------------------------------------------
-
-verify_env_references() {
-local target_dir="$1"
-local fail_count=0
-
-log_info "Verifying EnvironmentFile references..."
-
-while IFS= read -r file; do
-    local env_paths
-    env_paths=$(grep "^EnvironmentFile=" "$file" | cut -d= -f2-)
-    
-    [[ -z "$env_paths" ]] && continue
-
-    while read -r path; do
-        local expanded_path
-        expanded_path=$(_expand_quadlet_path "$path")
-        
-        if [[ ! -f "$expanded_path" ]]; then
-             echo -e "${Q_COLOR_RED}!! [INTEGRITY] Missing Env File: $path${Q_COLOR_RESET}"
-             echo "   Referenced in: $file"
-             ((fail_count++))
-        fi
-    done <<< "$env_paths"
-done < <(find "$target_dir" -name "*.container")
-
-if (( fail_count > 0 )); then
-    log_err "Found $fail_count missing environment file references."
-    return 1
-fi
-
-log_success "All EnvironmentFile references resolve."
-return 0
-}
-
-# ------------------------------------------------------------------------------
-# Checks Podman secrets. Interactive only if TTY is present.
-# ------------------------------------------------------------------------------
-
-verify_runtime_secrets() {
-local target_dir="$1"
-local fail_count=0
-
-# Dependency Check
-if ! command -v podman &> /dev/null; then
-    log_err "Podman not found. Cannot verify runtime secrets."
-    return 1
-fi
-
-log_info "Verifying Podman Secret existence..."
-
-while read -r line; do
-    local secret_def="${line#Secret=}"
-    local secret_name="${secret_def%%,*}"
-    
-    [[ -z "$secret_name" ]] && continue
-
-    if ! podman secret exists "$secret_name"; then
-        echo -e "${Q_COLOR_RED}!! [RUNTIME] Missing Podman Secret: $secret_name${Q_COLOR_RESET}"
-        ((fail_count++))
-        
-        # Interactive Fix Logic (Check for TTY)
-        if [[ -t 0 ]]; then
-            echo -n "   > Generate random 32-byte key for '$secret_name'? (y/N): "
-            read -r choice
-            if [[ "$choice" =~ ^[Yy]$ ]]; then
-                if command -v openssl &> /dev/null; then
-                    if openssl rand -base64 32 | podman secret create "$secret_name" -; then
-                        echo -e "      ${Q_COLOR_GREEN}✔ Created.${Q_COLOR_RESET}"
-                        ((fail_count--))
-                    fi
-                else
-                    log_err "openssl not found. Cannot generate key."
-                fi
-            fi
-        fi
-    fi
-done < <(grep -h "^Secret=" "$target_dir"/*.container 2>/dev/null || true)
-
-return $(( fail_count > 0 ? 1 : 0 ))
-
-
-}
-
-# ------------------------------------------------------------------------------
-# Validates host directory existence for volume mounts.
-# ------------------------------------------------------------------------------
-
-verify_runtime_volumes() {
-local target_dir="$1"
-local fail_count=0
-
-log_info "Verifying Host Volume paths..."
-
-while read -r line; do
-    local vol_def="${line#Volume=}"
-    local host_path="${vol_def%%:*}"
-    local expanded_path
-    expanded_path=$(_expand_quadlet_path "$host_path")
-    
-    # Filter: Skip non-absolute paths (named volumes) and sockets
-    [[ "$expanded_path" != /* ]] && continue
-    [[ "$expanded_path" == *.sock ]] && continue
-
-    if [[ ! -d "$expanded_path" ]]; then
-         echo -e "${Q_COLOR_RED}!! [RUNTIME] Missing Host Directory: $expanded_path${Q_COLOR_RESET}"
-         ((fail_count++))
-         
-         if [[ -t 0 ]]; then
-             echo -n "   > Create directory? (y/N): "
-             read -r choice
-             if [[ "$choice" =~ ^[Yy]$ ]]; then
-                if mkdir -p "$expanded_path"; then
-                    echo -e "      ${Q_COLOR_GREEN}✔ Created.${Q_COLOR_RESET}"
-                    ((fail_count--))
-                fi
-             fi
-         fi
-    fi
-done < <(grep -h "^Volume=" "$target_dir"/*.container 2>/dev/null || true)
-
-return $(( fail_count > 0 ? 1 : 0 ))
-
-
-}
-
-# ------------------------------------------------------------------------------
-# Main entry point.
-# ------------------------------------------------------------------------------
-
 execute_audit() {
-log_info "Starting Static Intent Analysis & Runtime Verification..."
+    # Temporarily relax strict mode to allow error accumulation
+    set +e
+    
+    echo_info "Auditing intent directory: $QUADCTL_INTENT_DIR"
+    
+    local errors=0
+    local warnings=0
+    
+    # 1. Check if Intent Directory Exists
+    if [[ ! -d "$QUADCTL_INTENT_DIR" ]]; then
+        echo_error "[CRITICAL] Intent directory not found: $QUADCTL_INTENT_DIR"
+        return 1
+    fi
 
-# Ensure Q_SRC_DIR is set (Defaulting to XDG if missing for portability)
-local target="${Q_SRC_DIR:-$HOME/.config/containers/systemd}"
+    # 2. Iterate over .container files
+    # We use a while loop with find to handle filenames with spaces safely
+    while IFS= read -r container_file; do
+        local unit_name
+        unit_name=$(basename "$container_file")
+        
+        # A. Prefix Check
+        if [[ "$unit_name" != "${QUADCTL_ARCH_PREFIX}"* ]]; then
+            echo_warn "[STYLE] Unit '$unit_name' does not strictly follow prefix '${QUADCTL_ARCH_PREFIX}'"
+            ((warnings++))
+        fi
 
-if [[ ! -d "$target" ]]; then
-    log_err "Target directory not found: $target"
-    return 1
-fi
+        # B. EnvironmentFile Check
+        # Grep for EnvironmentFile=..., extract value, check existence.
+        # Regex: Start of line, optional whitespace, literal "EnvironmentFile="
+        # This explicitly excludes lines starting with # or ;
+        local env_refs
+        env_refs=$(grep -E "^\s*EnvironmentFile=" "$container_file")
+        
+        if [[ -n "$env_refs" ]]; then
+            while IFS= read -r line; do
+                # Extract value part (everything after the first =)
+                local ref="${line#*=}"
+                
+                # 1. Trim Leading Whitespace
+                ref="${ref#"${ref%%[![:space:]]*}"}"
+                
+                # 2. Trim Trailing Whitespace
+                ref="${ref%"${ref##*[![:space:]]}"}"
+                
+                # 3. Handle Optional Prefix (-)
+                local is_optional=false
+                if [[ "$ref" == -* ]]; then
+                    is_optional=true
+                    ref="${ref:1}" # Strip the dash
+                fi
 
-local status=0
+                # 4. Resolve %h to $HOME
+                local resolved_path="${ref//%h/$HOME}"
+                
+                # 5. Check existence
+                if [[ ! -f "$resolved_path" ]]; then
+                    if [[ "$is_optional" == "true" ]]; then
+                        # It is missing, but marked optional. Just a warning/info.
+                        echo_warn "[OPTIONAL] Missing EnvironmentFile in '$unit_name'"
+                        echo "   Reference: '$ref' (Marked as optional '-')"
+                        ((warnings++))
+                    else
+                        # It is missing and required.
+                        echo_error "[CRITICAL] Missing EnvironmentFile in '$unit_name'"
+                        echo "   Reference: '$ref'"
+                        echo "   File does not exist on system"
+                        ((errors++))
+                    fi
+                fi
+            done <<< "$env_refs"
+        fi
 
-verify_env_references "$target" || status=1
-echo "----------------------------------------------------------------"
-scan_for_secrets "$target" || status=1
-echo "----------------------------------------------------------------"
-verify_runtime_secrets "$target" || status=1
-echo "----------------------------------------------------------------"
-verify_runtime_volumes "$target" || status=1
-echo "----------------------------------------------------------------"
+        # C. Secret Check (Basic stub for now, looking for Secret=)
+        local sec_refs
+        sec_refs=$(grep -E "^\s*Secret=" "$container_file" | cut -d= -f2-)
+        if [[ -n "$sec_refs" ]]; then
+             while IFS= read -r ref; do
+                # Format usually source=... or just path. Simplified check.
+                # Only flagging if it looks like a path and is missing.
+                if [[ "$ref" == /* || "$ref" == %h* ]]; then
+                     local resolved_secret="${ref//%h/$HOME}"
+                     # Clean up potential extra options (Secret=path,type=mount...)
+                     resolved_secret=$(echo "$resolved_secret" | cut -d, -f1)
+                     
+                     if [[ ! -e "$resolved_secret" ]]; then
+                        echo_error "[CRITICAL] Missing Secret source in '$unit_name'"
+                        echo "   Reference: '$resolved_secret'"
+                        ((errors++))
+                     fi
+                fi
+             done <<< "$sec_refs"
+        fi
 
-if (( status == 0 )); then
-    log_success "Audit Passed. Intent matches runtime state."
-else
-    log_err "Audit Failed. Unresolved discrepancies exist."
-    return 1
-fi
+    done < <(find "$QUADCTL_INTENT_DIR" -name "*.container" -print0 | xargs -0 -r ls)
 
-
+    # Summary
+    if [[ $errors -gt 0 ]]; then
+        echo_error "Audit failed with $errors error(s) and $warnings warning(s)."
+        # Re-enable strict mode
+        set -e
+        return 1
+    else
+        echo_success "Audit passed. ($warnings warnings)"
+        set -e
+        return 0
+    fi
 }

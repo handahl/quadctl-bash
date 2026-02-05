@@ -1,119 +1,128 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: shell.bash
-# PATH: src/logic/shell.bash
-# PROJECT: quadctl
-# VERSION: 11.5.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Interactive REPL for Quadctl.
-# ==============================================================================
+# Logic: Interactive Shell (REPL)
+# Author: SAC-CP (v2.1)
+# Description: Provides an interactive command loop for quadctl.
 
-source "${INSTALL_ROOT}/src/logic/matrix.bash"
-source "${INSTALL_ROOT}/src/logic/control.bash"
-source "${INSTALL_ROOT}/src/logic/doctor.bash"
-source "${INSTALL_ROOT}/src/logic/tree.bash"
-source "${INSTALL_ROOT}/src/logic/audit.bash"
-source "${INSTALL_ROOT}/src/ui/help.bash"
+# Source dependencies required for the shell
+# We assume core/env.bash and core/deps.bash are already loaded by the shim.
+source "${QUADCTL_HOME}/src/logic/matrix.bash"
+source "${QUADCTL_HOME}/src/logic/tree.bash"
+source "${QUADCTL_HOME}/src/logic/audit.bash"
+source "${QUADCTL_HOME}/src/logic/doctor.bash"
+source "${QUADCTL_HOME}/src/logic/logs.bash"
+source "${QUADCTL_HOME}/src/logic/control.bash"
+source "${QUADCTL_HOME}/src/api/systemd.bash"
 
 execute_shell() {
-    local initial_args="$*"
+    local initial_arg="${1:-}"
+
+    echo_info "Entering Quadctl Interactive Shell..."
     
-    log_info "Entering Quadctl Interactive Shell..."
-    echo "Type 'help' for commands, 'exit' to quit."
-    
-    if [[ -n "$initial_args" ]]; then
-        run_repl_cmd $initial_args
+    # 1. Initial View (Configurable via arguments)
+    if [[ "$initial_arg" =~ ^(a|all)$ ]]; then
+        execute_matrix "all"
     else
-        execute_matrix_view "standard"
+        execute_matrix
     fi
 
-    trap 'echo -e "\n${Q_COLOR_YELLOW}[Shell] Use exit/quit to leave.${Q_COLOR_RESET}";' SIGINT
+    # 2. UX: Commands Hint Block
+    echo -e "\n\033[1mcommands:\033[0m \033[1ma\033[0mll services | \033[1mdr\033[0m daemon-reload | \033[1mdry\033[0m-run | \033[1maudit\033[0m | \033[1mdoc\033[0mtor | \033[1mq\033[0muit"
 
-    local history_file="${XDG_STATE_HOME:-$HOME/.local/state}/quadctl_history"
-    touch "$history_file"
-
+    # 3. Main REPL Loop
+    local cmd args
     while true; do
-        local prompt="${Q_COLOR_BLUE}quadctl>${Q_COLOR_RESET} "
-        read -e -p "$(echo -e "$prompt")" -r input || break
-        
-        [[ -z "$input" ]] && continue
-        echo "$input" >> "$history_file"
+        # Signal Handling: Trap SIGINT (Ctrl+C) to prevent killing the shell itself.
+        # We print a newline and reset the prompt.
+        trap 'echo -e "\n[Shell] Interrupted. Type output exit to quit."; continue' SIGINT
 
-        run_repl_cmd $input
+        # Read Input
+        if ! read -r -e -p "quadctl> " cmd args; then
+            echo # Newline on EOF (Ctrl+D)
+            break
+        fi
+
+        # Reset trap to default for command execution (allows children to handle signals normally, 
+        # or we wrap them specifically).
+        trap - SIGINT
+
+        # Dispatch
+        case "$cmd" in
+            # --- Observations ---
+            matrix|m)
+                execute_matrix "$args"
+                ;;
+            tree|t)
+                execute_tree
+                ;;
+            status)
+                # 's' is explicitly REMOVED as an alias to avoid conflict/confusion
+                if [[ "$args" == "all" || "$args" == "a" ]]; then
+                    execute_matrix "all"
+                else
+                    execute_matrix
+                fi
+                ;;
+            
+            # --- Inspection/Logs ---
+            logs|l)
+                # Signal Isolation: Run in subshell so Ctrl+C kills logs, not REPL
+                (
+                    trap 'exit 0' SIGINT
+                    execute_logs "$args"
+                )
+                ;;
+            
+            # --- Governance ---
+            audit)
+                execute_audit
+                ;;
+            doctor|doc)
+                execute_doctor
+                ;;
+            dry)
+                 # Run the quadlet generator in dry-run mode
+                 /usr/lib/systemd/system-generators/podman-system-generator --dryrun
+                 ;;
+
+            # --- Control ---
+            start)   execute_control "start" "$args" ;;
+            stop)    execute_control "stop" "$args" ;;
+            restart) execute_control "restart" "$args" ;;
+            enable)  execute_control "enable" "$args" ;;
+            disable) execute_control "disable" "$args" ;;
+            
+            # --- System ---
+            dr|daemon-reload)
+                api_systemd_reload
+                ;;
+            
+            # --- Meta ---
+            help|h|?)
+                # Inline help for shell
+                echo "Shell Commands:"
+                echo "  m, matrix [all]   : Show status matrix"
+                echo "  t, tree           : Show dependency tree"
+                echo "  l, logs <unit>    : View logs (Ctrl+C to exit logs)"
+                echo "  audit             : Check configuration integrity"
+                echo "  dr                : Daemon Reload"
+                echo "  dry               : Quadlet Generator Dry Run"
+                echo "  exit, quit, q     : Exit shell"
+                ;;
+            exit|quit|q)
+                echo_info "Exiting Shell."
+                break
+                ;;
+            "")
+                # Empty enter key, just refresh prompt
+                continue
+                ;;
+            *)
+                echo_error "Unknown command: $cmd"
+                echo "Type 'help' for available commands."
+                ;;
+        esac
     done
     
+    # Clean exit
     trap - SIGINT
-}
-
-run_repl_cmd() {
-    local input_str="$*"
-    local cmd_arr
-    IFS=' ' read -r -a cmd_arr <<< "$input_str"
-    local cmd="${cmd_arr[0]:-}"
-    local arg="${cmd_arr[1]:-}"
-
-    case "$cmd" in
-        exit|quit|q)
-            if [[ "${#cmd_arr[@]}" -eq 1 ]]; then
-                echo "Bye."
-                exit 0
-            fi
-            execute_matrix_view "all"
-            ;;
-        help)
-            show_help
-            ;;
-        status|qs|s)
-            # BIFURCATION: 's' -> Matrix. 's foo' -> Systemctl Status.
-            if [[ -z "$arg" ]]; then
-                execute_matrix_view "standard"
-            elif [[ "$arg" =~ ^(a|all)$ ]]; then
-                execute_matrix_view "all"
-            else
-                execute_control "status" "$arg"
-            fi
-            ;;
-        a|all)
-            execute_matrix_view "all"
-            ;;
-        doctor)
-            execute_doctor
-            ;;
-        matrix)
-            execute_matrix_view "$arg"
-            ;;
-        tree)
-            execute_tree_view
-            ;;
-        audit)
-            execute_audit
-            ;;
-        deploy)
-            source "${INSTALL_ROOT}/src/logic/deploy.bash"
-            execute_deploy "$arg"
-            ;;
-        dry)
-            source "${INSTALL_ROOT}/src/logic/deploy.bash"
-            execute_deploy "dry-run"
-            ;;
-        dr)
-            log_info "Reloading systemd..."
-            systemctl --user daemon-reload
-            log_success "Reloaded."
-            ;;
-        start|stop|restart|reload|logs|enable|disable|mask|unmask)
-            execute_control "$cmd" "$arg"
-            ;;
-        cat|edit)
-             source "${INSTALL_ROOT}/src/logic/interact.bash"
-             if [[ "$cmd" == "cat" ]]; then execute_cat "${arg:-missing}" "${cmd_arr[2]:-}"; fi
-             if [[ "$cmd" == "edit" ]]; then execute_edit "${arg:-missing}" "${cmd_arr[2]:-}"; fi
-             ;;
-        clear)
-            clear
-            ;;
-        *)
-            log_err "Unknown command: $cmd"
-            ;;
-    esac
 }
