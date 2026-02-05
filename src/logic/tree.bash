@@ -1,92 +1,115 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: tree.bash
-# PATH: src/logic/tree.bash
-# PROJECT: quadctl
-# VERSION: 11.6.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Hierarchical view of Pods and Containers with advanced coloring.
-# ==============================================================================
+# Logic: Tree View
+# Author: SAC-CP (v2.1)
+# Description: Renders a hierarchical view of Pods and Containers.
 
-execute_tree_view() {
-    log_info "Generating Topology Tree..."
-    echo ""
-
-    # 1. FETCH DATA (Pods & Containers)
-    # Get JSON output from podman for rich metadata
-    local pod_data
-    pod_data=$(podman pod ps --format json)
-    local ctr_data
-    ctr_data=$(podman ps -a --format json)
-
-    # 2. HELPER: COLORIZE IMAGE TAGS
-    colorize_image() {
-        local img_str="$1"
-        # Extract tag (everything after last colon, or 'latest' if none)
-        local tag="latest"
-        if [[ "$img_str" == *":"* ]]; then
-            tag="${img_str##*:}"
-        fi
-
-        local color="$Q_COLOR_RESET"
-
-        if [[ "$tag" == "latest" ]]; then
-            color="$Q_COLOR_GREEN"
-        elif [[ "$tag" =~ ^v[0-9] ]] || [[ "$tag" =~ ^[0-9]+(\.[0-9]+)+ ]]; then
-            # "v3.6", "2.0.22" -> Purple (Semantic / Specific)
-            color="\033[0;35m" # Purple
-        elif [[ "$tag" =~ ^[0-9]+-[a-zA-Z]+ ]] || [[ "$tag" =~ ^v[0-9]+$ ]]; then
-             # "18-bookworm", "v3" -> Blue (Major/Stable)
-             color="$Q_COLOR_BLUE"
-        elif [[ "$tag" =~ ^sha256: ]] || [[ "$tag" =~ ^@sha ]]; then
-             # SHA hashes -> Orange
-             color="\033[0;33m" # Orange/Yellow
-             # Abbreviate SHA for display
-             tag="${tag:0:12}..."
-        else
-             # Fallback -> Blue? Or Reset?
-             color="$Q_COLOR_BLUE"
-        fi
-
-        echo -e "${color}${tag}${Q_COLOR_RESET}"
-    }
-
-    # 3. HELPER: NETWORK EXTRACTION
-    get_networks() {
-        local ctr_name="$1"
-        # Parse JSON for Networks
-        echo "$ctr_data" | jq -r --arg name "$ctr_name" '.[] | select(.Names[] | contains($name)) | .Networks // "host"'
-    }
-
-    # 4. RENDER STANDALONE CONTAINERS
-    echo "[Standalone Containers]"
+execute_tree() {
+    echo_info "Generating Quadlet Tree..."
     
-    # Filter containers that do NOT belong to a pod
-    # (Podman JSON has "Pod" field, empty if standalone)
-    echo "$ctr_data" | jq -c '.[] | select(.Pod == "" or .Pod == null)' | while read -r ctr; do
-        local name=$(echo "$ctr" | jq -r '.Names[0]')
-        local status=$(echo "$ctr" | jq -r '.Status')
-        local image=$(echo "$ctr" | jq -r '.Image')
-        
-        # Calculate Uptime string
-        local uptime_str="-"
-        if [[ "$status" =~ Up\ ([^)]+) ]]; then
-            uptime_str="${BASH_REMATCH[1]}"
-        fi
+    # Header
+    printf "%-30s %-12s %-20s %s\n" "RESOURCE" "STATE" "UPTIME" "PORTS"
+    echo "--------------------------------------------------------------------------------"
 
-        # Colorize Image
-        local pretty_tag
-        pretty_tag=$(colorize_image "$image")
-        
-        # Networks
-        local nets
-        nets=$(echo "$ctr" | jq -r '.Networks // "host"')
+    # Check for jq
+    if ! command -v jq &> /dev/null; then
+        echo_error "The 'tree' command requires 'jq' to parse hierarchy."
+        return 1
+    fi
 
-        echo -e "  ├── ● ${Q_COLOR_RESET}${name} (${uptime_str})"
-        echo -e "  │    ├── img : ${pretty_tag}"
-        echo -e "  │    ├── net : ${nets}"
-        echo -e "  │"
-    done
+    local pods_json
+    pods_json=$(podman pod ps --format json)
     
-    echo ""
+    local containers_json
+    containers_json=$(podman ps -a --format json)
+
+    # If no pods/containers, plain exit
+    if [[ "$pods_json" == "[]" && "$containers_json" == "[]" ]]; then
+        echo "No resources found."
+        return 0
+    fi
+
+    # --- Process Pods ---
+    local pod_ids
+    pod_ids=$(echo "$pods_json" | jq -r '.[]? | .Id')
+    
+    if [[ -n "$pod_ids" ]]; then
+        while IFS= read -r pod_id; do
+            local pod_name pod_status pod_obj
+            
+            pod_obj=$(echo "$pods_json" | jq -r --arg id "$pod_id" 'select(.Id == $id)')
+            pod_name=$(echo "$pod_obj" | jq -r '.Name')
+            pod_status=$(echo "$pod_obj" | jq -r '.Status')
+            
+            # Pod Output
+            printf "📦 %-27s \033[1m%-12s\033[0m %-20s %s\n" "$pod_name" "$pod_status" "-" "-"
+
+            # Find containers in this pod
+            local pod_containers
+            pod_containers=$(echo "$containers_json" | jq -r --arg pid "$pod_id" 'select(.Pod == $pid) | .Id')
+            
+            if [[ -n "$pod_containers" ]]; then
+                while IFS= read -r cid; do
+                    _render_container_row "$cid" "$containers_json" "  ├─"
+                done <<< "$pod_containers"
+            fi
+            
+        done <<< "$pod_ids"
+    fi
+
+    # --- Process Standalone Containers ---
+    local standalone_ids
+    standalone_ids=$(echo "$containers_json" | jq -r 'select(.Pod == "" or .Pod == null) | .Id')
+    
+    if [[ -n "$standalone_ids" ]]; then
+        if [[ -n "$pod_ids" ]]; then echo; fi # Spacer
+        while IFS= read -r cid; do
+             _render_container_row "$cid" "$containers_json" "🐳"
+        done <<< "$standalone_ids"
+    fi
+}
+
+_render_container_row() {
+    local cid="$1"
+    local json="$2"
+    local prefix="$3"
+    
+    local c_obj c_name c_state c_status c_ports
+    c_obj=$(echo "$json" | jq -r --arg id "$cid" 'select(.Id == $id)')
+    c_name=$(echo "$c_obj" | jq -r '.Names[0] // .Name')
+    c_state=$(echo "$c_obj" | jq -r '.State')
+    c_status=$(echo "$c_obj" | jq -r '.Status')
+    
+    # Parse Ports
+    local ports_raw
+    ports_raw=$(echo "$c_obj" | jq -r '.Ports // empty')
+    local ports_display="-"
+    if [[ -n "$ports_raw" && "$ports_raw" != "null" ]]; then
+        ports_display=$(echo "$ports_raw" | jq -r 'map(select(.hostPort) | "\(.hostPort):\(.containerPort)") | join(", ")')
+    fi
+    
+    # Calculate Uptime string
+    local uptime_str="-"
+    local uptime_re="Up ([^)]+)"
+    
+    if [[ "$c_status" =~ $uptime_re ]]; then
+        uptime_str="${BASH_REMATCH[1]}"
+    else
+        uptime_str="$c_status"
+    fi
+    
+    # Truncate
+    uptime_str=$(echo "$uptime_str" | xargs)
+    if [[ ${#uptime_str} -gt 20 ]]; then
+        uptime_str="${uptime_str:0:17}..."
+    fi
+
+    # Colorize State
+    local state_color=""
+    case "$c_state" in
+        running) state_color="\033[32m" ;; # Green
+        exited)  state_color="\033[31m" ;; # Red
+        *)       state_color="\033[33m" ;; # Yellow
+    esac
+    
+    printf "%s %-26s ${state_color}%-12s\033[0m %-20s %s\n" "$prefix" "$c_name" "$c_state" "$uptime_str" "$ports_display"
 }

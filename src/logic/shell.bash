@@ -3,76 +3,115 @@
 # Author: SAC-CP (v2.1)
 # Description: Provides an interactive command loop for quadctl.
 
-# Source dependencies required for the shell
-# We assume core/env.bash and core/deps.bash are already loaded by the shim.
-source "${QUADCTL_HOME}/src/logic/matrix.bash"
-source "${QUADCTL_HOME}/src/logic/tree.bash"
-source "${QUADCTL_HOME}/src/logic/audit.bash"
-source "${QUADCTL_HOME}/src/logic/doctor.bash"
-source "${QUADCTL_HOME}/src/logic/logs.bash"
-source "${QUADCTL_HOME}/src/logic/control.bash"
-source "${QUADCTL_HOME}/src/api/systemd.bash"
+# [Architectural Correction]
+# Dynamic Path Resolution (Layout Agnostic)
+# We must determine if we are in a 'src/' structure (Repo) or flat structure (Install).
+
+if [[ -z "${QUADCTL_HOME:-}" ]]; then
+    # Resolve absolute path of the directory containing this script
+    _CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    
+    # Heuristic 1: Development (Repo) -> .../src/logic -> Root is ../../
+    if [[ -f "$(dirname "$(dirname "${_CURRENT_DIR}")")/src/logic/shell.bash" ]]; then
+        QUADCTL_HOME="$(dirname "$(dirname "${_CURRENT_DIR}")")"
+        _SRC_PREFIX="/src"
+    
+    # Heuristic 2: Production (Install) -> .../logic -> Root is ../
+    elif [[ -f "$(dirname "${_CURRENT_DIR}")/logic/shell.bash" ]]; then
+        QUADCTL_HOME="$(dirname "${_CURRENT_DIR}")"
+        _SRC_PREFIX=""
+        
+    else
+        # Fallback to standard install path
+        QUADCTL_HOME="${HOME}/.local/share/quadctl"
+        if [[ -d "${QUADCTL_HOME}/src" ]]; then _SRC_PREFIX="/src"; else _SRC_PREFIX=""; fi
+    fi
+else
+    # QUADCTL_HOME provided by shim. Detect layout inside it.
+    if [[ -d "${QUADCTL_HOME}/src/logic" ]]; then
+        _SRC_PREFIX="/src"
+    else
+        _SRC_PREFIX=""
+    fi
+fi
+
+# 1. Dependency Safety & Fallbacks
+#    Try to load env.bash with correct prefix
+if [[ -f "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash" ]]; then
+    source "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash"
+fi
+
+# [RESILIENCE] Fallback Logging Primitives
+if ! command -v echo_info &> /dev/null; then
+    echo_info() { echo -e ":: [INFO] $*"; }
+fi
+if ! command -v echo_error &> /dev/null; then
+    echo_error() { echo -e "!! [ERR]  $*"; } >&2
+fi
+
+# 2. Source Dependencies (Dynamic Paths)
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/matrix.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/tree.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/audit.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/doctor.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/logs.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/control.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/deploy.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/api/systemd.bash"
 
 execute_shell() {
     local initial_arg="${1:-}"
 
     echo_info "Entering Quadctl Interactive Shell..."
     
-    # 1. Initial View (Configurable via arguments)
+    # 1. Initial View
+    # Use sed to clean up hint noise from matrix
     if [[ "$initial_arg" =~ ^(a|all)$ ]]; then
-        execute_matrix "all"
+        if command -v execute_matrix &> /dev/null; then
+            execute_matrix "all" | sed '/^Hints:/d'
+        else
+            echo_error "Matrix logic not loaded."
+        fi
     else
-        execute_matrix
+        if command -v execute_matrix &> /dev/null; then
+            execute_matrix | sed '/^Hints:/d'
+        else
+            echo_error "Matrix logic not loaded."
+        fi
     fi
 
     # 2. UX: Commands Hint Block
-    echo -e "\n\033[1mcommands:\033[0m \033[1ma\033[0mll services | \033[1mdr\033[0m daemon-reload | \033[1mdry\033[0m-run | \033[1maudit\033[0m | \033[1mdoc\033[0mtor | \033[1mq\033[0muit"
+    echo -e "commands: \033[1ms\033[0mtatus | \033[1ma\033[0mll services | \033[1mdr\033[0m daemon-reload | \033[1mdry\033[0m-run quadlet generator | audit | doctor | deploy"
 
     # 3. Main REPL Loop
     local cmd args
     while true; do
-        # Signal Handling: Trap SIGINT (Ctrl+C) to prevent killing the shell itself.
-        # We print a newline and reset the prompt.
-        trap 'echo -e "\n[Shell] Interrupted. Type output exit to quit."; continue' SIGINT
+        trap 'echo -e "\n[Shell] Interrupted. Type exit to quit."; continue' SIGINT
 
-        # Read Input
         if ! read -r -e -p "quadctl> " cmd args; then
-            echo # Newline on EOF (Ctrl+D)
+            echo 
             break
         fi
 
-        # Reset trap to default for command execution (allows children to handle signals normally, 
-        # or we wrap them specifically).
         trap - SIGINT
 
-        # Dispatch
         case "$cmd" in
-            # --- Observations ---
-            matrix|m)
-                execute_matrix "$args"
+            matrix|m|s|status)
+                if [[ "$args" == "all" || "$args" == "a" ]]; then
+                    execute_matrix "all" | sed '/^Hints:/d'
+                else
+                    execute_matrix | sed '/^Hints:/d'
+                fi
                 ;;
             tree|t)
                 execute_tree
                 ;;
-            status)
-                # 's' is explicitly REMOVED as an alias to avoid conflict/confusion
-                if [[ "$args" == "all" || "$args" == "a" ]]; then
-                    execute_matrix "all"
-                else
-                    execute_matrix
-                fi
-                ;;
-            
-            # --- Inspection/Logs ---
             logs|l)
-                # Signal Isolation: Run in subshell so Ctrl+C kills logs, not REPL
                 (
                     trap 'exit 0' SIGINT
                     execute_logs "$args"
                 )
                 ;;
-            
-            # --- Governance ---
             audit)
                 execute_audit
                 ;;
@@ -80,32 +119,28 @@ execute_shell() {
                 execute_doctor
                 ;;
             dry)
-                 # Run the quadlet generator in dry-run mode
                  /usr/lib/systemd/system-generators/podman-system-generator --dryrun
                  ;;
-
-            # --- Control ---
+            deploy)
+                execute_deploy "$args"
+                ;;
             start)   execute_control "start" "$args" ;;
             stop)    execute_control "stop" "$args" ;;
             restart) execute_control "restart" "$args" ;;
             enable)  execute_control "enable" "$args" ;;
             disable) execute_control "disable" "$args" ;;
-            
-            # --- System ---
             dr|daemon-reload)
                 api_systemd_reload
                 ;;
-            
-            # --- Meta ---
             help|h|?)
-                # Inline help for shell
                 echo "Shell Commands:"
-                echo "  m, matrix [all]   : Show status matrix"
+                echo "  s, matrix [a]     : Show status matrix"
                 echo "  t, tree           : Show dependency tree"
-                echo "  l, logs <unit>    : View logs (Ctrl+C to exit logs)"
+                echo "  l, logs <unit>    : View logs"
                 echo "  audit             : Check configuration integrity"
-                echo "  dr                : Daemon Reload"
                 echo "  dry               : Quadlet Generator Dry Run"
+                echo "  deploy            : Deploy changes"
+                echo "  dr                : Daemon Reload"
                 echo "  exit, quit, q     : Exit shell"
                 ;;
             exit|quit|q)
@@ -113,16 +148,12 @@ execute_shell() {
                 break
                 ;;
             "")
-                # Empty enter key, just refresh prompt
                 continue
                 ;;
             *)
                 echo_error "Unknown command: $cmd"
-                echo "Type 'help' for available commands."
                 ;;
         esac
     done
-    
-    # Clean exit
     trap - SIGINT
 }

@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: audit.bash
-# PATH: src/logic/audit.bash
-# PROJECT: quadctl
-# VERSION: 10.6.1
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Static Intent Analysis & Governance Enforcement.
-# ==============================================================================
-set -euo pipefail
-
-# ------------------------------------------------------------------------------
-# Internal helper to handle systemd/quadlet path specifiers.
-# ------------------------------------------------------------------------------
+# Logic: Audit (Governance)
+# Author: SAC-CP (v2.1)
+# Description: Static analysis of intent vs reality. Checks for missing secrets/env files.
 
 execute_audit() {
     # Temporarily relax strict mode to allow error accumulation
@@ -29,7 +19,6 @@ execute_audit() {
     fi
 
     # 2. Iterate over .container files
-    # We use a while loop with find to handle filenames with spaces safely
     while IFS= read -r container_file; do
         local unit_name
         unit_name=$(basename "$container_file")
@@ -41,9 +30,7 @@ execute_audit() {
         fi
 
         # B. EnvironmentFile Check
-        # Grep for EnvironmentFile=..., extract value, check existence.
         # Regex: Start of line, optional whitespace, literal "EnvironmentFile="
-        # This explicitly excludes lines starting with # or ;
         local env_refs
         env_refs=$(grep -E "^\s*EnvironmentFile=" "$container_file")
         
@@ -71,12 +58,10 @@ execute_audit() {
                 # 5. Check existence
                 if [[ ! -f "$resolved_path" ]]; then
                     if [[ "$is_optional" == "true" ]]; then
-                        # It is missing, but marked optional. Just a warning/info.
                         echo_warn "[OPTIONAL] Missing EnvironmentFile in '$unit_name'"
                         echo "   Reference: '$ref' (Marked as optional '-')"
                         ((warnings++))
                     else
-                        # It is missing and required.
                         echo_error "[CRITICAL] Missing EnvironmentFile in '$unit_name'"
                         echo "   Reference: '$ref'"
                         echo "   File does not exist on system"
@@ -86,16 +71,13 @@ execute_audit() {
             done <<< "$env_refs"
         fi
 
-        # C. Secret Check (Basic stub for now, looking for Secret=)
+        # C. Secret Check
         local sec_refs
         sec_refs=$(grep -E "^\s*Secret=" "$container_file" | cut -d= -f2-)
         if [[ -n "$sec_refs" ]]; then
              while IFS= read -r ref; do
-                # Format usually source=... or just path. Simplified check.
-                # Only flagging if it looks like a path and is missing.
                 if [[ "$ref" == /* || "$ref" == %h* ]]; then
                      local resolved_secret="${ref//%h/$HOME}"
-                     # Clean up potential extra options (Secret=path,type=mount...)
                      resolved_secret=$(echo "$resolved_secret" | cut -d, -f1)
                      
                      if [[ ! -e "$resolved_secret" ]]; then
@@ -112,7 +94,6 @@ execute_audit() {
     # Summary
     if [[ $errors -gt 0 ]]; then
         echo_error "Audit failed with $errors error(s) and $warnings warning(s)."
-        # Re-enable strict mode
         set -e
         return 1
     else
