@@ -13,6 +13,9 @@ if [[ -f "${_SHIM_DIR}/src/core/loader.bash" ]]; then
 # 2. Installed Mode (Standard Path)
 elif [[ -f "${HOME}/.local/share/quadctl/src/core/loader.bash" ]]; then
     source "${HOME}/.local/share/quadctl/src/core/loader.bash"
+# 3. Fallback (Legacy/Flattened)
+elif [[ -f "${HOME}/.local/share/quadctl/core/loader.bash" ]]; then
+    source "${HOME}/.local/share/quadctl/core/loader.bash"
 else
     echo "!! [FATAL] Quadctl Shim: Cannot find bootloader."
     echo "   Searched: ${_SHIM_DIR}/src/core/loader.bash"

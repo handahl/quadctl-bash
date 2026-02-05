@@ -7,9 +7,8 @@
 _LOADER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # We need to find the project root relative to this file.
-# If we are in /src/core/loader.bash -> Root is ../../
 if [[ -d "$(dirname "${_LOADER_DIR}")/api" ]]; then
-    # We are inside 'src'
+    # We are inside 'src' (e.g., .../src/core)
     QUADCTL_HOME="$(dirname "$(dirname "${_LOADER_DIR}")")"
     _SRC_PREFIX="/src"
 else
@@ -51,7 +50,7 @@ source "${QUADCTL_HOME}${_SRC_PREFIX}/ui/help.bash"
 # 6. Load Shell & Interaction
 source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/shell.bash"
 
-# Only source interact if strictly needed (usually it's the caller)
+# Only source interact if strictly needed (usually it's the caller, but good for safety)
 if [[ -f "${QUADCTL_HOME}${_SRC_PREFIX}/logic/interact.bash" ]]; then
     source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/interact.bash"
 fi
