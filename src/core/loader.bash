@@ -1,61 +1,57 @@
 #!/usr/bin/env bash
 # Core: Bootloader
 # Author: SAC-CP (v2.1)
-# Description: Centralized dependency injection. ONE source of truth for paths.
+# Description: The ONLY file allowed to calculate paths and source dependencies.
 
-# 1. Self-Location (The only place this math happens)
-_CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 1. Establish Root & Prefix
+_LOADER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Resolve Root
-# Repo: quadctl/src/core/loader.bash -> Root: quadctl (../../)
-# Install: quadctl/core/loader.bash -> Root: quadctl (../)
-
-if [[ -f "$(dirname "${_CURRENT_DIR}")/api/podman.bash" ]]; then
-     if [[ -d "$(dirname "${_CURRENT_DIR}")/src" ]]; then
-         QUADCTL_HOME="$(dirname "$(dirname "${_CURRENT_DIR}")")"
-         _PREFIX="/src"
-     else
-         QUADCTL_HOME="$(dirname "${_CURRENT_DIR}")"
-         _PREFIX=""
-     fi
+# We need to find the project root relative to this file.
+# If we are in /src/core/loader.bash -> Root is ../../
+if [[ -d "$(dirname "${_LOADER_DIR}")/api" ]]; then
+    # We are inside 'src'
+    QUADCTL_HOME="$(dirname "$(dirname "${_LOADER_DIR}")")"
+    _SRC_PREFIX="/src"
 else
-    # Fallback/Safe Default
-    QUADCTL_HOME="${HOME}/.local/share/quadctl"
-    if [[ -d "${QUADCTL_HOME}/src" ]]; then _PREFIX="/src"; else _PREFIX=""; fi
+    # Fallback/Flattened
+    QUADCTL_HOME="$(dirname "${_LOADER_DIR}")"
+    _SRC_PREFIX=""
 fi
 
 export QUADCTL_HOME
 
-# 2. Source Core Primitives (Logging & Deps)
-if [[ -f "${QUADCTL_HOME}${_PREFIX}/core/env.bash" ]]; then
-    source "${QUADCTL_HOME}${_PREFIX}/core/env.bash"
+# 2. Load Environment Primitives
+if [[ -f "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash" ]]; then
+    source "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash"
 else
-    echo "!! [FATAL] Bootloader crashed. Cannot find core/env.bash at ${QUADCTL_HOME}${_PREFIX}/core/env.bash"
+    echo "!! [FATAL] Bootloader: Missing core/env.bash at ${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash"
     exit 99
 fi
 
-source "${QUADCTL_HOME}${_PREFIX}/core/deps.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/core/deps.bash"
 
-# 3. Source APIs
-source "${QUADCTL_HOME}${_PREFIX}/api/systemd.bash"
-source "${QUADCTL_HOME}${_PREFIX}/api/podman.bash"
+# 3. Load API Layer
+source "${QUADCTL_HOME}${_SRC_PREFIX}/api/systemd.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/api/podman.bash"
 
-# 4. Source Logic Modules
-source "${QUADCTL_HOME}${_PREFIX}/logic/matrix.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/tree.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/logs.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/control.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/audit.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/doctor.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/debug.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/deploy.bash"
-source "${QUADCTL_HOME}${_PREFIX}/logic/migrate.bash"
+# 4. Load Logic Layer (Functions Only)
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/matrix.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/tree.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/logs.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/control.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/audit.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/doctor.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/debug.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/deploy.bash"
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/migrate.bash"
 
-# 5. UI Components
-source "${QUADCTL_HOME}${_PREFIX}/ui/help.bash"
+# 5. Load UI Layer
+source "${QUADCTL_HOME}${_SRC_PREFIX}/ui/help.bash"
 
-# 6. Shell & Dispatch
-source "${QUADCTL_HOME}${_PREFIX}/logic/shell.bash"
-if [[ -f "${QUADCTL_HOME}${_PREFIX}/logic/interact.bash" ]]; then
-    source "${QUADCTL_HOME}${_PREFIX}/logic/interact.bash"
+# 6. Load Shell & Interaction
+source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/shell.bash"
+
+# Only source interact if strictly needed (usually it's the caller)
+if [[ -f "${QUADCTL_HOME}${_SRC_PREFIX}/logic/interact.bash" ]]; then
+    source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/interact.bash"
 fi

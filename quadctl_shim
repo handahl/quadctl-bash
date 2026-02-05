@@ -1,29 +1,24 @@
 #!/usr/bin/env bash
 # Shim: Quadctl Entry Point
 # Author: SAC-CP (v2.1)
-# Description: Minimal entry point that bootstraps the environment.
 
 set -uo pipefail
 
-_SHIM_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_SHIM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Try to find the bootloader (loader.bash)
-# 1. Dev/Repo Path
-if [[ -f "${_SHIM_PATH}/src/core/loader.bash" ]]; then
-    source "${_SHIM_PATH}/src/core/loader.bash"
-
-# 2. Installed Path (Flattened)
-elif [[ -f "${HOME}/.local/share/quadctl/core/loader.bash" ]]; then
-    source "${HOME}/.local/share/quadctl/core/loader.bash"
-    
-# 3. Installed Path (Nested src)
+# Strategy: Find loader.bash
+# 1. Dev Mode (Relative to shim in repo)
+if [[ -f "${_SHIM_DIR}/src/core/loader.bash" ]]; then
+    source "${_SHIM_DIR}/src/core/loader.bash"
+# 2. Installed Mode (Standard Path)
 elif [[ -f "${HOME}/.local/share/quadctl/src/core/loader.bash" ]]; then
     source "${HOME}/.local/share/quadctl/src/core/loader.bash"
-
 else
-    echo "!! [FATAL] Quadctl Shim cannot find core/loader.bash."
+    echo "!! [FATAL] Quadctl Shim: Cannot find bootloader."
+    echo "   Searched: ${_SHIM_DIR}/src/core/loader.bash"
+    echo "   Searched: ${HOME}/.local/share/quadctl/src/core/loader.bash"
     exit 1
 fi
 
-# Dispatch
+# Handover to Dispatcher
 interact_dispatch "$@"
