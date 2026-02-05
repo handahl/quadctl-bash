@@ -11,6 +11,8 @@
 source "${INSTALL_ROOT}/src/logic/matrix.bash"
 source "${INSTALL_ROOT}/src/logic/control.bash"
 source "${INSTALL_ROOT}/src/logic/doctor.bash"
+source "${INSTALL_ROOT}/src/logic/tree.bash"
+source "${INSTALL_ROOT}/src/logic/audit.bash"
 source "${INSTALL_ROOT}/src/ui/help.bash"
 
 execute_shell() {
@@ -76,6 +78,15 @@ run_repl_cmd() {
             ;;
         doctor)
             execute_doctor
+            ;;
+        matrix)
+            execute_matrix_view "$arg"
+            ;;
+        tree)
+            execute_tree_view
+            ;;
+        audit)
+            execute_audit
             ;;
         deploy)
             source "${INSTALL_ROOT}/src/logic/deploy.bash"
