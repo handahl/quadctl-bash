@@ -4,21 +4,17 @@
 # Description: Centralized dependency injection. ONE source of truth for paths.
 
 # 1. Self-Location (The only place this math happens)
-#    We assume load.bash is in .../core/load.bash
 _CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Resolve Root
-# If we are in .../src/core, root is ../../
+# Repo: quadctl/src/core/loader.bash -> Root: quadctl (../../)
+# Install: quadctl/core/loader.bash -> Root: quadctl (../)
+
 if [[ -f "$(dirname "${_CURRENT_DIR}")/api/podman.bash" ]]; then
-     # We are likely in .../src/core or .../core inside a flattened structure
-     # Let's check parent
      if [[ -d "$(dirname "${_CURRENT_DIR}")/src" ]]; then
-         # We are deep inside src/core? No, standard logic:
-         # Repo: quadctl/src/core/load.bash -> Root: quadctl
          QUADCTL_HOME="$(dirname "$(dirname "${_CURRENT_DIR}")")"
          _PREFIX="/src"
      else
-         # Install: quadctl/core/load.bash -> Root: quadctl
          QUADCTL_HOME="$(dirname "${_CURRENT_DIR}")"
          _PREFIX=""
      fi
@@ -45,7 +41,6 @@ source "${QUADCTL_HOME}${_PREFIX}/api/systemd.bash"
 source "${QUADCTL_HOME}${_PREFIX}/api/podman.bash"
 
 # 4. Source Logic Modules
-#    (Order matters slightly: low-level logic first)
 source "${QUADCTL_HOME}${_PREFIX}/logic/matrix.bash"
 source "${QUADCTL_HOME}${_PREFIX}/logic/tree.bash"
 source "${QUADCTL_HOME}${_PREFIX}/logic/logs.bash"
@@ -59,12 +54,8 @@ source "${QUADCTL_HOME}${_PREFIX}/logic/migrate.bash"
 # 5. UI Components
 source "${QUADCTL_HOME}${_PREFIX}/ui/help.bash"
 
-# 6. Shell & Dispatch (High Level)
+# 6. Shell & Dispatch
 source "${QUADCTL_HOME}${_PREFIX}/logic/shell.bash"
-# interact.bash is usually the caller, but we source it just in case
 if [[ -f "${QUADCTL_HOME}${_PREFIX}/logic/interact.bash" ]]; then
     source "${QUADCTL_HOME}${_PREFIX}/logic/interact.bash"
 fi
-
-# Log success only if verbose debugging is requested, otherwise silent.
-# echo_debug "Bootloader complete. Root: $QUADCTL_HOME"

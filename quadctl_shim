@@ -3,39 +3,27 @@
 # Author: SAC-CP (v2.1)
 # Description: Minimal entry point that bootstraps the environment.
 
-# Strict Mode
 set -uo pipefail
-
-# 1. Locate the Installation Root
-#    We assume the shim is at ROOT/bin/quadctl OR ROOT/quadctl_shim
-#    We need to find ROOT.
 
 _SHIM_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Try to find the loader
-# Scenario A: Installed (shim is in bin/, loader in share/quadctl/core)
-# Scenario B: Dev (shim is in root, loader in src/core)
-# Scenario C: Local User (shim in ~/.local/bin, files in ~/.local/share/quadctl)
+# Try to find the bootloader (loader.bash)
+# 1. Dev/Repo Path
+if [[ -f "${_SHIM_PATH}/src/core/loader.bash" ]]; then
+    source "${_SHIM_PATH}/src/core/loader.bash"
 
-# We will try specific paths.
-if [[ -f "${_SHIM_PATH}/src/core/load.bash" ]]; then
-    # Development / Repo Root
-    source "${_SHIM_PATH}/src/core/load.bash"
-
-elif [[ -f "${HOME}/.local/share/quadctl/core/load.bash" ]]; then
-    # Standard User Install
-    source "${HOME}/.local/share/quadctl/core/load.bash"
+# 2. Installed Path (Flattened)
+elif [[ -f "${HOME}/.local/share/quadctl/core/loader.bash" ]]; then
+    source "${HOME}/.local/share/quadctl/core/loader.bash"
     
-elif [[ -f "${HOME}/.local/share/quadctl/src/core/load.bash" ]]; then
-    # User Install (with src folder preserved)
-    source "${HOME}/.local/share/quadctl/src/core/load.bash"
+# 3. Installed Path (Nested src)
+elif [[ -f "${HOME}/.local/share/quadctl/src/core/loader.bash" ]]; then
+    source "${HOME}/.local/share/quadctl/src/core/loader.bash"
 
 else
-    echo "!! [FATAL] Quadctl Shim cannot find core/load.bash."
-    echo "   Checked: ${_SHIM_PATH}/src/core/load.bash"
-    echo "   Checked: ${HOME}/.local/share/quadctl/core/load.bash"
+    echo "!! [FATAL] Quadctl Shim cannot find core/loader.bash."
     exit 1
 fi
 
-# 2. Dispatch
+# Dispatch
 interact_dispatch "$@"
