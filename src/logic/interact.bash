@@ -3,43 +3,22 @@
 # Author: SAC-CP (v2.1)
 # Description: Routes CLI arguments to specific logic modules.
 
-# [Architectural Correction]
-# Dynamic Path Resolution for Sourcing
-# (Replicated from shell.bash for consistency)
+# [ARCHITECTURAL CLEANUP]
+# We do NOT source logic files here. We assume the caller (shim) ran the loader.
+# OR, we source the loader ourselves if we are the entry point (defensive).
 
-if [[ -z "${QUADCTL_HOME:-}" ]]; then
+if ! command -v execute_matrix &> /dev/null; then
+    # If matrix isn't loaded, try to find and run the loader.
     _CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [[ -f "$(dirname "$(dirname "${_CURRENT_DIR}")")/src/logic/interact.bash" ]]; then
-        QUADCTL_HOME="$(dirname "$(dirname "${_CURRENT_DIR}")")"
-        _SRC_PREFIX="/src"
-    elif [[ -f "$(dirname "${_CURRENT_DIR}")/logic/interact.bash" ]]; then
-        QUADCTL_HOME="$(dirname "${_CURRENT_DIR}")"
-        _SRC_PREFIX=""
-    else
-        QUADCTL_HOME="${HOME}/.local/share/quadctl"
-        if [[ -d "${QUADCTL_HOME}/src" ]]; then _SRC_PREFIX="/src"; else _SRC_PREFIX=""; fi
-    fi
-else
-    # QUADCTL_HOME provided by shim
-    if [[ -d "${QUADCTL_HOME}/src/logic" ]]; then
-        _SRC_PREFIX="/src"
-    else
-        _SRC_PREFIX=""
+    # Try finding loader relative to us
+    # If we are in logic/, loader is in ../core/load.bash
+    if [[ -f "$(dirname "${_CURRENT_DIR}")/core/load.bash" ]]; then
+         source "$(dirname "${_CURRENT_DIR}")/core/load.bash"
+    elif [[ -f "$(dirname "${_CURRENT_DIR}")/src/core/load.bash" ]]; then
+         # Deep dev structure mismatch fallback
+         source "$(dirname "${_CURRENT_DIR}")/src/core/load.bash"
     fi
 fi
-
-# Source Logic Modules with correct prefix
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/matrix.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/tree.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/shell.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/logs.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/control.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/audit.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/deploy.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/migrate.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/doctor.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/debug.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/ui/help.bash"
 
 interact_dispatch() {
     local cmd="${1:-}"
@@ -58,13 +37,10 @@ interact_dispatch() {
             execute_matrix "$args" | sed '/^Hints:/d'
             echo "hint: use 'quadctl shell' for interactive mode"
             ;;
-        
-        # FIX: Added 'all' / 'a' handler
         all|a)
             execute_matrix "all" | sed '/^Hints:/d'
             echo "hint: use 'quadctl shell' for interactive mode"
             ;;
-
         tree|t)
             execute_tree
             ;;
@@ -106,7 +82,6 @@ interact_dispatch() {
         # --- Inspection ---
         cat)
             if [[ -z "$args" ]]; then
-                # Fallback primitive if echo_error not loaded yet (unlikely here but safe)
                 echo "Usage: quadctl cat <unit>" >&2
                 exit 1
             fi
@@ -127,8 +102,6 @@ interact_dispatch() {
             ;;
             
         *)
-            # Check if command is a valid unit to try implicit "status" or "logs"? 
-            # No, strictly follow commands.
             if command -v echo_error &> /dev/null; then
                 echo_error "Unknown command: $cmd"
             else

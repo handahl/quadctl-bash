@@ -3,81 +3,27 @@
 # Author: SAC-CP (v2.1)
 # Description: Provides an interactive command loop for quadctl.
 
-# [Architectural Correction]
-# Dynamic Path Resolution (Layout Agnostic)
-# We must determine if we are in a 'src/' structure (Repo) or flat structure (Install).
-
-if [[ -z "${QUADCTL_HOME:-}" ]]; then
-    # Resolve absolute path of the directory containing this script
-    _CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    
-    # Heuristic 1: Development (Repo) -> .../src/logic -> Root is ../../
-    if [[ -f "$(dirname "$(dirname "${_CURRENT_DIR}")")/src/logic/shell.bash" ]]; then
-        QUADCTL_HOME="$(dirname "$(dirname "${_CURRENT_DIR}")")"
-        _SRC_PREFIX="/src"
-    
-    # Heuristic 2: Production (Install) -> .../logic -> Root is ../
-    elif [[ -f "$(dirname "${_CURRENT_DIR}")/logic/shell.bash" ]]; then
-        QUADCTL_HOME="$(dirname "${_CURRENT_DIR}")"
-        _SRC_PREFIX=""
-        
-    else
-        # Fallback to standard install path
-        QUADCTL_HOME="${HOME}/.local/share/quadctl"
-        if [[ -d "${QUADCTL_HOME}/src" ]]; then _SRC_PREFIX="/src"; else _SRC_PREFIX=""; fi
-    fi
-else
-    # QUADCTL_HOME provided by shim. Detect layout inside it.
-    if [[ -d "${QUADCTL_HOME}/src/logic" ]]; then
-        _SRC_PREFIX="/src"
-    else
-        _SRC_PREFIX=""
-    fi
-fi
-
-# 1. Dependency Safety & Fallbacks
-#    Try to load env.bash with correct prefix
-if [[ -f "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash" ]]; then
-    source "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash"
-fi
-
-# [RESILIENCE] Fallback Logging Primitives
-if ! command -v echo_info &> /dev/null; then
-    echo_info() { echo -e ":: [INFO] $*"; }
-fi
-if ! command -v echo_error &> /dev/null; then
-    echo_error() { echo -e "!! [ERR]  $*"; } >&2
-fi
-
-# 2. Source Dependencies (Dynamic Paths)
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/matrix.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/tree.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/audit.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/doctor.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/logs.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/control.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/deploy.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/api/systemd.bash"
+# [ARCHITECTURAL CLEANUP]
+# No sourcing. No path calculation. 
+# We assume the Bootloader (core/load.bash) has done the work.
 
 execute_shell() {
     local initial_arg="${1:-}"
+    
+    # Safety Check: Did the loader work?
+    if ! command -v execute_matrix &> /dev/null; then
+        echo "!! [FATAL] Shell loaded without dependencies. Bootloader failed."
+        echo "   Debug: QUADCTL_HOME=${QUADCTL_HOME:-unset}"
+        return 1
+    fi
 
     echo_info "Entering Quadctl Interactive Shell..."
-    
+
     # 1. Initial View
-    # Use sed to clean up hint noise from matrix
     if [[ "$initial_arg" =~ ^(a|all)$ ]]; then
-        if command -v execute_matrix &> /dev/null; then
-            execute_matrix "all" | sed '/^Hints:/d'
-        else
-            echo_error "Matrix logic not loaded."
-        fi
+        execute_matrix "all" | sed '/^Hints:/d'
     else
-        if command -v execute_matrix &> /dev/null; then
-            execute_matrix | sed '/^Hints:/d'
-        else
-            echo_error "Matrix logic not loaded."
-        fi
+        execute_matrix | sed '/^Hints:/d'
     fi
 
     # 2. UX: Commands Hint Block
@@ -129,10 +75,13 @@ execute_shell() {
             restart) execute_control "restart" "$args" ;;
             enable)  execute_control "enable" "$args" ;;
             disable) execute_control "disable" "$args" ;;
+            mask)    execute_control "mask" "$args" ;;
+            unmask)  execute_control "unmask" "$args" ;;
             dr|daemon-reload)
                 api_systemd_reload
                 ;;
             help|h|?)
+                # Simplified shell help
                 echo "Shell Commands:"
                 echo "  s, matrix [a]     : Show status matrix"
                 echo "  t, tree           : Show dependency tree"

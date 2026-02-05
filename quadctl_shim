@@ -1,132 +1,41 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: quadctl_shim
-# PATH: src/quadctl_shim
-# PROJECT: quadctl
-# VERSION: 11.6.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
-# ==============================================================================
+# Shim: Quadctl Entry Point
+# Author: SAC-CP (v2.1)
+# Description: Minimal entry point that bootstraps the environment.
 
-set -euo pipefail
+# Strict Mode
+set -uo pipefail
 
-# 1. RESOLVE INSTALLATION ROOT
-SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SOURCE" ]; do 
-  DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
-  SOURCE="$(readlink "$SOURCE")"
-  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" 
-done
-SCRIPT_DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+# 1. Locate the Installation Root
+#    We assume the shim is at ROOT/bin/quadctl OR ROOT/quadctl_shim
+#    We need to find ROOT.
 
-if [[ -d "${SCRIPT_DIR}/src" ]]; then
-    readonly INSTALL_ROOT="${SCRIPT_DIR}"
-elif [[ -d "${SCRIPT_DIR}/../src" ]]; then
-    readonly INSTALL_ROOT="$(dirname "${SCRIPT_DIR}")"
+_SHIM_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Try to find the loader
+# Scenario A: Installed (shim is in bin/, loader in share/quadctl/core)
+# Scenario B: Dev (shim is in root, loader in src/core)
+# Scenario C: Local User (shim in ~/.local/bin, files in ~/.local/share/quadctl)
+
+# We will try specific paths.
+if [[ -f "${_SHIM_PATH}/src/core/load.bash" ]]; then
+    # Development / Repo Root
+    source "${_SHIM_PATH}/src/core/load.bash"
+
+elif [[ -f "${HOME}/.local/share/quadctl/core/load.bash" ]]; then
+    # Standard User Install
+    source "${HOME}/.local/share/quadctl/core/load.bash"
+    
+elif [[ -f "${HOME}/.local/share/quadctl/src/core/load.bash" ]]; then
+    # User Install (with src folder preserved)
+    source "${HOME}/.local/share/quadctl/src/core/load.bash"
+
 else
-    log_err "Could not locate 'src' directory from ${SCRIPT_DIR}"
+    echo "!! [FATAL] Quadctl Shim cannot find core/load.bash."
+    echo "   Checked: ${_SHIM_PATH}/src/core/load.bash"
+    echo "   Checked: ${HOME}/.local/share/quadctl/core/load.bash"
     exit 1
 fi
 
-# 2. BOOTSTRAP ENVIRONMENT
-if [[ -f "${INSTALL_ROOT}/src/core/env.bash" ]]; then
-    source "${INSTALL_ROOT}/src/core/env.bash"
-else
-    log_err "Core environment missing at ${INSTALL_ROOT}/src/core/env.bash"
-    exit 1
-fi
-
-# 3. DEPENDENCY CHECK
-source "${INSTALL_ROOT}/src/core/deps.bash"
-if [[ ! "${1:-}" =~ ^(-h|--help|-v|--version|shell|s)$ ]]; then
-    check_runtime_dependencies
-fi
-
-# 4. COMMAND ROUTING
-cmd="${1:-status}"
-shift || true
-
-parse_filter() {
-    local arg="${1:-}"
-    if [[ "$arg" == --type=* ]]; then
-        echo "${arg#*=}"
-    elif [[ "$arg" =~ ^(-a|--all|all|a)$ ]]; then
-        echo "all"
-    else
-        echo "standard"
-    fi
-}
-
-case "$cmd" in
-    # --- INSPECTION & EDITING ---
-    cat)
-        source "${INSTALL_ROOT}/src/logic/interact.bash"
-        execute_cat "${1:-missing}" "${2:-}"
-        ;;
-    edit)
-        source "${INSTALL_ROOT}/src/logic/interact.bash"
-        execute_edit "${1:-missing}" "${2:-}"
-        ;;
-    tree)
-        source "${INSTALL_ROOT}/src/logic/tree.bash"
-        execute_tree_view
-        ;;
-    audit)
-        source "${INSTALL_ROOT}/src/logic/audit.bash"
-        execute_audit
-        ;;
-    status|s|qs)
-        if [[ -n "${1:-}" ]] && [[ ! "${1:-}" =~ ^(all|a|-a|--all)$ ]]; then
-            source "${INSTALL_ROOT}/src/logic/control.bash"
-            execute_control "status" "$1"
-        else
-            source "${INSTALL_ROOT}/src/logic/matrix.bash"
-            filter=$(parse_filter "${1:-}")
-            execute_matrix_view "$filter"
-        fi
-        ;;
-    deploy|sync)
-        source "${INSTALL_ROOT}/src/logic/deploy.bash"
-        execute_deploy "${1:-dry-run}"
-        ;;
-    doctor)
-        source "${INSTALL_ROOT}/src/logic/doctor.bash"
-        execute_doctor
-        ;;
-    migrate)
-        source "${INSTALL_ROOT}/src/logic/migrate.bash"
-        execute_prefix_migration "$@"
-        ;;
-    dr|daemon-reload)
-        log_info "Reloading systemd user daemon..."
-        systemctl --user daemon-reload
-        log_success "Daemon reloaded."
-        ;;
-    dry)
-        source "${INSTALL_ROOT}/src/logic/deploy.bash"
-        execute_deploy "dry-run"
-        ;;
-    # Expanded Control Routing
-    start|stop|restart|reload|logs|enable|disable|mask|unmask|depends-on|depended-by)
-        source "${INSTALL_ROOT}/src/logic/control.bash"
-        execute_control "$cmd" "${1:-}"
-        ;;
-    help|--help|-h)
-        source "${INSTALL_ROOT}/src/ui/help.bash"
-        show_help
-        ;;
-    version|--version|-v)
-        source "${INSTALL_ROOT}/src/ui/help.bash"
-        show_version
-        ;;
-    shell|s)
-        source "${INSTALL_ROOT}/src/logic/shell.bash"
-        execute_shell "$@"
-        ;;
-    *)
-        source "${INSTALL_ROOT}/src/ui/help.bash"
-        log_err "Unknown command: $cmd"
-        show_help
-        exit 1
-        ;;
-esac
+# 2. Dispatch
+interact_dispatch "$@"
