@@ -1,56 +1,62 @@
 #!/usr/bin/env bash
-# Core: Bootloader
+# Core: Bootloader (Debug Mode)
 # Author: SAC-CP (v2.1)
-# Description: The ONLY file allowed to calculate paths and source dependencies.
 
 # 1. Establish Root & Prefix
 _LOADER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# We need to find the project root relative to this file.
+# Logic: If we are in .../src/core, parent is src.
 if [[ -d "$(dirname "${_LOADER_DIR}")/api" ]]; then
-    # We are inside 'src' (e.g., .../src/core)
+    # We are inside 'src'
     QUADCTL_HOME="$(dirname "$(dirname "${_LOADER_DIR}")")"
     _SRC_PREFIX="/src"
 else
-    # Fallback/Flattened
+    # Fallback/Flattened (e.g. core/loader.bash -> root/core -> root)
     QUADCTL_HOME="$(dirname "${_LOADER_DIR}")"
     _SRC_PREFIX=""
 fi
 
 export QUADCTL_HOME
 
-# 2. Load Environment Primitives
-if [[ -f "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash" ]]; then
-    source "${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash"
-else
-    echo "!! [FATAL] Bootloader: Missing core/env.bash at ${QUADCTL_HOME}${_SRC_PREFIX}/core/env.bash"
-    exit 99
-fi
+# 2. Dependency Helper
+_load_module() {
+    local rel_path="$1"
+    local full_path="${QUADCTL_HOME}${_SRC_PREFIX}/${rel_path}"
+    
+    if [[ -f "$full_path" ]]; then
+        source "$full_path"
+    else
+        echo "!! [FATAL] Loader failed to find: $full_path" >&2
+        exit 99
+    fi
+}
 
-source "${QUADCTL_HOME}${_SRC_PREFIX}/core/deps.bash"
+# 3. Load Core (Environment first!)
+_load_module "core/env.bash"
+_load_module "core/deps.bash"
 
-# 3. Load API Layer
-source "${QUADCTL_HOME}${_SRC_PREFIX}/api/systemd.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/api/podman.bash"
+# 4. Load API Layer
+_load_module "api/systemd.bash"
+_load_module "api/podman.bash"
 
-# 4. Load Logic Layer (Functions Only)
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/matrix.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/tree.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/logs.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/control.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/audit.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/doctor.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/debug.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/deploy.bash"
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/migrate.bash"
+# 5. Load Logic Layer
+_load_module "logic/matrix.bash"
+_load_module "logic/tree.bash"
+_load_module "logic/logs.bash"
+_load_module "logic/control.bash"
+_load_module "logic/audit.bash"
+_load_module "logic/doctor.bash"
+_load_module "logic/debug.bash"
+_load_module "logic/deploy.bash"
+_load_module "logic/migrate.bash"
 
-# 5. Load UI Layer
-source "${QUADCTL_HOME}${_SRC_PREFIX}/ui/help.bash"
+# 6. Load UI Layer
+_load_module "ui/help.bash"
 
-# 6. Load Shell & Interaction
-source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/shell.bash"
+# 7. Load Shell & Interaction
+_load_module "logic/shell.bash"
 
-# Only source interact if strictly needed (usually it's the caller, but good for safety)
+# Only source interact if strict path exists
 if [[ -f "${QUADCTL_HOME}${_SRC_PREFIX}/logic/interact.bash" ]]; then
     source "${QUADCTL_HOME}${_SRC_PREFIX}/logic/interact.bash"
 fi

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shim: Quadctl Entry Point
+# Shim: Quadctl Entry Point (Debug Mode)
 # Author: SAC-CP (v2.1)
 
 set -uo pipefail
@@ -24,4 +24,9 @@ else
 fi
 
 # Handover to Dispatcher
-interact_dispatch "$@"
+if command -v interact_dispatch &> /dev/null; then
+    interact_dispatch "$@"
+else
+    echo "!! [FATAL] Dispatcher 'interact_dispatch' not loaded."
+    exit 1
+fi
