@@ -3,9 +3,9 @@
 # FILE: help.bash
 # PATH: src/ui/help.bash
 # PROJECT: quadctl
-# VERSION: 11.4.0
+# VERSION: 11.9.0
 # AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Help documentation and version output.
+# DESCRIPTION: Help documentation and version output (Capability-Aware).
 # ==============================================================================
 
 show_version() {
@@ -17,37 +17,50 @@ show_help() {
     echo "USAGE: quadctl [command] [arguments...]"
     echo ""
     echo "observe"
-    echo "  status (qs, s)     View status (Running/Failed only)."
-    echo "  status all (s a)   View status (Union View incl. Networks)."
-    echo "  tree               Hierarchical view of Pods and Containers."
-    echo "  shell (s)          Interactive REPL."
-    echo "  doctor             System diagnostics."
-    echo "  dr                 Daemon Reload."
-    echo "  debug <unit>       Enter Debug Cycle (Stop -> Disable Restart -> Start -> Logs)."
-    echo "  logs <unit>        Advanced log viewer (Cleaned JSON output)."
-    echo ""
-    echo "interact"
-    echo "  cat <unit>         Show files and drop-ins of specified units"
-    echo "  cat intent <unit>  View the DEPLOYED source file (.container)."
-    echo "  edit intent <unit> Edit the SOURCE file."
-    echo ""
-    echo "govern"
-    echo "  audit              Static Intent Analysis."
-    echo "  migrate            Prefix Governance (Renaming)."
-    echo "  deploy             Dry-run (Check drift)."
-    echo "  deploy now         Execute rsync + daemon-reload."
-    echo "  dry                Shortcut for 'deploy dry-run'."
-    echo ""
-    echo "units"
-    echo "  start | stop | restart <unit>"
-    echo "  enable | disable <unit>"
-    echo "  mask | unmask <unit>"
+    echo "  status [all]           View status. Optional: 'all' shows all unit states incl. Networks."
+    echo "  matrix                 Hierarchical reconciliation of intent, units, and containers."
+    echo "  tree                   Hierarchical view of Pods and Containers."
+    echo "  shell                  Interactive REPL."
+    echo "  doctor                 System diagnostics."
+    echo "  reload-daemon (rd)     Systemd daemon reload."
+    echo "  logs <unit>            Advanced log viewer (cleaned output)."
+
+    # Conditional: Only show debug if the module is present
+    if [[ -f "${INSTALL_ROOT}/src/logic/debug.bash" ]]; then
+        echo "  debug <unit>           Debug Cycle: Stop -> Disable Restart -> Start -> Logs."
+    fi
 
     echo ""
-    echo "misc"
-    echo "  -h, --help         Show this help message."
-    echo "  -v, --version      Show version information."
-    echo "  Source (Intent):   ${Q_SRC_DIR:-[Unset]}"
-    echo "  Target (.config):  ${Q_CONFIG_DIR:-[Unset]}"
-    echo "  Socket:            ${Q_PODMAN_SOCK:-[Unset]}"
+    echo "inspect"
+    echo "  cat <unit>             Show systemd unit files and drop-ins."
+    echo "  depends-on <unit>      List dependencies required by <unit>."
+    echo "  depended-by <unit>     List units that depend on <unit> (reverse)."
+
+    echo ""
+    echo "govern"
+    echo "  audit                  Static Intent Analysis (Secrets, Env Files, Prefix)."
+    echo "  migrate                Prefix Governance and Unit Renaming."
+    echo "  deploy [force]         Sync intent to runtime. Optional: 'force' applies changes."
+
+    echo ""
+    echo "units"
+    echo "  start <unit>           Start a unit. Pre-flight: existence + dependency check."
+    echo "  stop <unit>            Stop a unit."
+    echo "  restart <unit>         Restart a unit. Pre-flight: existence + dependency check."
+    echo "  enable <unit>          Enable unit for auto-start."
+    echo "  disable <unit>         Disable unit from auto-start."
+    echo "  mask <unit>            Prevent unit from being started."
+    echo "  unmask <unit>          Allow masked unit to start."
+
+    echo ""
+    echo "options"
+    echo "  -h, --help             Show this help message."
+    echo "  -v, --version          Show version information."
+
+    echo ""
+    echo "paths"
+    echo "  Intent (Source):       ${Q_SRC_DIR:-[Unset]}"
+    echo "  Runtime (Config):      ${Q_CONFIG_DIR:-[Unset]}"
+    echo "  Podman Socket:         ${Q_PODMAN_SOCK:-[Unset]}"
+    echo "  Architecture Prefix:   ${Q_ARCH_PREFIX:-[Unset]}"
 }
