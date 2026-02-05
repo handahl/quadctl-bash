@@ -3,10 +3,77 @@
 # FILE: control.bash
 # PATH: src/logic/control.bash
 # PROJECT: quadctl
-# VERSION: 11.6.0
+# VERSION: 11.7.0
 # AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Unit management with Dependency Intelligence & Interactive Selection.
+# DESCRIPTION: Unit management with Strict State Governance & Pre-Flight Validation.
 # ==============================================================================
+
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+# verify_unit_exists
+# Strict existence check using systemctl load state.
+# Returns 0 if unit exists, 1 otherwise (with error to stderr).
+# ------------------------------------------------------------------------------
+verify_unit_exists() {
+    local unit="$1"
+
+    # Query the LoadState property directly
+    local load_state
+    load_state=$(systemctl --user show "$unit" --property=LoadState --value 2>/dev/null || echo "not-found")
+
+    if [[ "$load_state" == "not-found" ]] || [[ "$load_state" == "masked" && "$load_state" != "loaded" ]]; then
+        log_err "Unit '$unit' does not exist or is not loaded." >&2
+        log_info "Try: systemctl --user list-unit-files '$unit*'" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# check_dependencies
+# Validates all required dependencies exist before starting a unit.
+# Returns 0 if all dependencies exist, 1 if any are missing (with breakdown).
+# ------------------------------------------------------------------------------
+check_dependencies() {
+    local unit="$1"
+    local missing_deps=()
+
+    # Parse dependencies (only direct requirements, not full tree)
+    local deps
+    deps=$(systemctl --user list-dependencies "$unit" --plain --no-legend --no-pager 2>/dev/null | grep -E "\.service$|\.target$" || true)
+
+    if [[ -z "$deps" ]]; then
+        return 0
+    fi
+
+    # Verify each dependency exists
+    while IFS= read -r dep; do
+        # Skip special systemd targets that are always present
+        if [[ "$dep" =~ ^(basic\.target|sysinit\.target|shutdown\.target|sockets\.target)$ ]]; then
+            continue
+        fi
+
+        local dep_load_state
+        dep_load_state=$(systemctl --user show "$dep" --property=LoadState --value 2>/dev/null || echo "not-found")
+
+        if [[ "$dep_load_state" == "not-found" ]]; then
+            missing_deps+=("$dep")
+        fi
+    done <<< "$deps"
+
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        log_err "Missing dependencies for '$unit':" >&2
+        for missing in "${missing_deps[@]}"; do
+            echo "   - $missing" >&2
+        done
+        log_info "Run 'quadctl deploy' to synchronize state, then 'systemctl --user daemon-reload'" >&2
+        return 1
+    fi
+
+    return 0
+}
 
 # ------------------------------------------------------------------------------
 # resolve_unit_name
@@ -19,7 +86,7 @@ resolve_unit_name() {
     fi
     local prefixed="${Q_ARCH_PREFIX}${input}.service"
     local bare="${input}.service"
-    
+
     # Try prefixed first as it's the architectural standard
     if systemctl --user list-unit-files "$prefixed" &>/dev/null; then
         echo "$prefixed"
@@ -160,12 +227,22 @@ execute_control() {
              fi
              ;;
         start)
+            # PRE-FLIGHT VALIDATION
+            verify_unit_exists "$unit" || return 1
+            check_dependencies "$unit" || return 1
+
+            # IDEMPOTENCY CHECK
+            if systemctl --user is-active --quiet "$unit"; then
+                log_info "Unit '$unit' is already active. No action taken."
+                return 0
+            fi
+
             local start_ts=$(date +%s%N)
             log_info "Starting $unit..."
-            
+
             # Show dependencies that are being activated (Informational)
             local implies
-            implies=$(systemctl --user list-dependencies "$unit" --plain --no-legend | grep "$Q_ARCH_PREFIX" | grep -v "$unit")
+            implies=$(systemctl --user list-dependencies "$unit" --plain --no-legend 2>/dev/null | grep "$Q_ARCH_PREFIX" | grep -v "$unit" || true)
             if [[ -n "$implies" ]]; then
                 echo ":: Also activating dependencies:"
                 echo "$implies" | sed 's/^/   + /'
@@ -180,9 +257,28 @@ execute_control() {
                  return 1
             fi
             ;;
-        stop|restart|reload|enable|disable|mask|unmask)
+        restart)
+            # PRE-FLIGHT VALIDATION (Same as start)
+            verify_unit_exists "$unit" || return 1
+            check_dependencies "$unit" || return 1
+
+            local start_ts=$(date +%s%N)
+            log_info "Restarting $unit..."
+
+            if systemctl --user restart "$unit"; then
+                local end_ts=$(date +%s%N)
+                local dur=$(( (end_ts - start_ts) / 1000000 ))
+                log_success "Restarted $unit (${dur}ms)."
+            else
+                log_err "Failed to restart $unit."
+                analyze_start_failure "$unit"
+                return 1
+            fi
+            ;;
+        stop|reload|enable|disable|mask|unmask)
+            local start_ts=$(date +%s%N)
             log_info "Exec: systemctl --user $action $unit"
-            
+
             if systemctl --user "$action" "$unit"; then
                 local end_ts=$(date +%s%N)
                 local dur=$(( (end_ts - start_ts) / 1000000 ))
