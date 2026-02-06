@@ -26,7 +26,7 @@ show_help() {
     echo "  logs <unit>            Advanced log viewer (cleaned output)."
 
     # Conditional: Only show debug if the module is present
-    if [[ -f "${INSTALL_ROOT}/src/logic/debug.bash" ]]; then
+    if [[ -f "${QUADCTL_HOME}/src/logic/debug.bash" ]]; then
         echo "  debug <unit>           Debug Cycle: Stop -> Disable Restart -> Start -> Logs."
     fi
 

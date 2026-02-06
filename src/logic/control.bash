@@ -208,8 +208,8 @@ execute_control() {
     case "$action" in
         logs|log|l)
             # Route to logs module if present, else journalctl
-            if [[ -f "${INSTALL_ROOT}/src/logic/logs.bash" ]]; then
-                source "${INSTALL_ROOT}/src/logic/logs.bash"
+            if [[ -f "${QUADCTL_HOME}/src/logic/logs.bash" ]]; then
+                source "${QUADCTL_HOME}/src/logic/logs.bash"
                 execute_logs "$unit"
             else
                 journalctl --user -u "$unit" -f -n 50 -o cat
@@ -219,8 +219,8 @@ execute_control() {
              systemctl --user status "$unit"
              ;;
         debug|dbg)
-             if [[ -f "${INSTALL_ROOT}/src/logic/debug.bash" ]]; then
-                source "${INSTALL_ROOT}/src/logic/debug.bash"
+             if [[ -f "${QUADCTL_HOME}/src/logic/debug.bash" ]]; then
+                source "${QUADCTL_HOME}/src/logic/debug.bash"
                 execute_debug "$unit"
              else
                 log_err "Debug module missing."

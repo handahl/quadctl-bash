@@ -2,10 +2,13 @@
 # Logic: Interaction Dispatcher
 # Author: SAC-CP (v2.1)
 
-# [ARCHITECTURAL NOTE]
-# No sourcing. Handled by loader.bash.
-
 interact_dispatch() {
+    # Preflight check: Ensure environment is loaded
+    if ! declare -f execute_matrix &> /dev/null; then
+        echo "!! [FATAL] Environment Not Loaded. Bootloader failed." >&2
+        exit 1
+    fi
+
     local cmd="${1:-}"
     shift
     local args="$*"
@@ -20,8 +23,7 @@ interact_dispatch() {
             echo "hint: use 'quadctl shell' for interactive mode"
             ;;
         all|a)
-            execute_matrix "all" | sed '/^Hints:/d'
-            echo "hint: use 'quadctl shell' for interactive mode"
+            execute_matrix "all"
             ;;
         tree|t)     execute_tree ;;
         shell)      execute_shell "$args" ;;

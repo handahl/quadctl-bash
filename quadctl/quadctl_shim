@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# Shim: Quadctl Entry Point (Debug Mode)
+# Shim: Quadctl Entry Point (Minimal Boot)
 # Author: SAC-CP (v2.1)
 
-set -uo pipefail
-
+# Strategy: Find loader.bash
 _SHIM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Strategy: Find loader.bash
 # 1. Dev Mode (Relative to shim in repo)
 if [[ -f "${_SHIM_DIR}/src/core/loader.bash" ]]; then
     source "${_SHIM_DIR}/src/core/loader.bash"
@@ -24,9 +22,4 @@ else
 fi
 
 # Handover to Dispatcher
-if command -v interact_dispatch &> /dev/null; then
-    interact_dispatch "$@"
-else
-    echo "!! [FATAL] Dispatcher 'interact_dispatch' not loaded."
-    exit 1
-fi
+interact_dispatch "$@"
