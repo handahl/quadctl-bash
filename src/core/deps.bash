@@ -83,7 +83,7 @@ check_runtime_dependencies() {
     fi
 
     # --------------------------------------------------------------------------
-    # STRICT VERSION ENFORCEMENT (As per ai_restraints_master.md)
+    # STRICT VERSION ENFORCEMENT
     # --------------------------------------------------------------------------
     
     # 1. BASH (>= 5.3.0)

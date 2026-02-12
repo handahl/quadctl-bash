@@ -42,7 +42,7 @@ check_dependencies() {
 
     # Parse dependencies (only direct requirements, not full tree)
     local deps
-    deps=$(systemctl --user list-dependencies "$unit" --plain --no-legend --no-pager 2>/dev/null | grep -E "\.service$|\.target$" || true)
+    deps=$(systemctl --user list-dependencies "$unit" --plain --no-legend --no-pager 2>/dev/null | grep -E "\.service$" || true)
 
     if [[ -z "$deps" ]]; then
         return 0
@@ -51,7 +51,7 @@ check_dependencies() {
     # Verify each dependency exists
     while IFS= read -r dep; do
         # Skip special systemd targets that are always present
-        if [[ "$dep" =~ ^(basic\.target|sysinit\.target|shutdown\.target|sockets\.target)$ ]]; then
+         if [[ ! "$dep" =~ ^${Q_ARCH_PREFIX} ]]; then
             continue
         fi
 
@@ -218,7 +218,7 @@ execute_control() {
         status)
              systemctl --user status "$unit"
              ;;
-        debug|dbg)
+        debug)
              if [[ -f "${INSTALL_ROOT}/src/logic/debug.bash" ]]; then
                 source "${INSTALL_ROOT}/src/logic/debug.bash"
                 execute_debug "$unit"

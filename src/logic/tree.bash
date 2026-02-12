@@ -3,8 +3,8 @@
 # Author: SAC-CP (v2.1)
 # Description: Renders a hierarchical view of Pods and Containers.
 
-execute_tree() {
-    echo_info "Generating Quadlet Tree..."
+execute_tree_view() {
+    log_info "Generating Quadlet Tree..."
     
     # Header
     printf "%-30s %-12s %-20s %s\n" "RESOURCE" "STATE" "UPTIME" "PORTS"
@@ -12,7 +12,7 @@ execute_tree() {
 
     # Check for jq
     if ! command -v jq &> /dev/null; then
-        echo_error "The 'tree' command requires 'jq' to parse hierarchy."
+        log_err "The 'tree' command requires 'jq' to parse hierarchy."
         return 1
     fi
 
