@@ -83,6 +83,12 @@ execute_matrix_view() {
     for unit in $all_units; do
         if [[ "$unit" != "${Q_ARCH_PREFIX}"* ]]; then continue; fi
 
+        # Skip non-container files from table row generation (they may be needed for summary)
+        local unit_basename="${unit%.service}"
+        if [[ ! "$unit_basename" == *".container" ]]; then
+            continue
+        fi
+
         # --- DATA EXTRACTION ---
         local s_active s_sub s_drift s_ts
         if echo "$sys_map" | jq -e --arg k "$unit" 'has($k)' >/dev/null; then
