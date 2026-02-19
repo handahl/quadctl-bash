@@ -99,7 +99,56 @@ run_repl_cmd() {
         dr)
             log_info "Reloading systemd..."
             systemctl --user daemon-reload
-            log_success "Reloaded."
+            
+            # Post-Reload Generator Validation
+            local validation_failed="false"
+            local config_dir="$HOME/.config/containers/systemd"
+            
+            if [[ -d "$config_dir" ]]; then
+                local service_files
+                service_files=$(find "$config_dir" -name "*.service" -type f 2>/dev/null)
+                
+                while IFS= read -r service_file; do
+                    if [[ -n "$service_file" ]]; then
+                        local service_filename=$(basename "$service_file")
+                        local stem="${service_filename%.service}"
+                        
+                        # Check for corresponding container/pod/network/volume file
+                        local container_file="$config_dir/${stem}.container"
+                        local pod_file="$config_dir/${stem}.pod"
+                        local network_file="$config_dir/${stem}.network"
+                        local volume_file="$config_dir/${stem}.volume"
+                        
+                        local source_file=""
+                        if [[ -f "$container_file" ]]; then
+                            source_file="$container_file"
+                        elif [[ -f "$pod_file" ]]; then
+                            source_file="$pod_file"
+                        elif [[ -f "$network_file" ]]; then
+                            source_file="$network_file"
+                        elif [[ -f "$volume_file" ]]; then
+                            source_file="$volume_file"
+                        fi
+                        
+                        if [[ -n "$source_file" ]]; then
+                            # Compare mtimes to check if generator ran but rejected the file
+                            local source_mtime=$(stat -c %Y "$source_file" 2>/dev/null || stat -f %m "$source_file" 2>/dev/null)
+                            local service_mtime=$(stat -c %Y "$service_file" 2>/dev/null || stat -f %m "$service_file" 2>/dev/null)
+                            
+                            if [[ -n "$source_mtime" && -n "$service_mtime" && "$source_mtime" -gt "$service_mtime" ]]; then
+                                log_err "[GEN_FAIL] Generator ran but rejected $source_file (source file is newer than service file). Check 'journalctl --user -xe' for Quadlet generator output."
+                                validation_failed="true"
+                            fi
+                        fi
+                    fi
+                done <<< "$service_files"
+            fi
+            
+            if [[ "$validation_failed" == "true" ]]; then
+                return 1
+            else
+                log_success "Reloaded."
+            fi
             ;;
         start|stop|restart|reload|logs|enable|disable|mask|unmask)
             execute_control "$cmd" "$arg"

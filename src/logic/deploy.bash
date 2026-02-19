@@ -170,6 +170,40 @@ execute_deploy() {
         check_git_status 
         
         systemctl --user daemon-reload
-        log_success "Deployment applied."
+        
+        # Post-Reload Generator Validation
+        local validation_failed="false"
+        local deployed_files
+        deployed_files=$(rsync $rsync_opts --itemize-changes "$Q_SRC_DIR/" "$Q_CONFIG_DIR/" 2>/dev/null | grep -E "^[<>]" | grep -E "\.(container|pod|network|volume)$" | awk '{print $2}' || true)
+        
+        if [[ -n "$deployed_files" ]]; then
+            while IFS= read -r file; do
+                if [[ -n "$file" ]]; then
+                    local filename=$(basename "$file")
+                    local service_filename="${filename%.*}.service"
+                    local service_path="$Q_CONFIG_DIR/$service_filename"
+                    
+                    if [[ ! -f "$service_path" ]]; then
+                        log_err "[GEN_FAIL] Service file not generated for $filename. Check 'journalctl --user -xe' for Quadlet generator output."
+                        validation_failed="true"
+                    else
+                        # Compare mtimes to check if generator ran but rejected the file
+                        local container_mtime=$(stat -c %Y "$Q_CONFIG_DIR/$filename" 2>/dev/null || stat -f %m "$Q_CONFIG_DIR/$filename" 2>/dev/null)
+                        local service_mtime=$(stat -c %Y "$service_path" 2>/dev/null || stat -f %m "$service_path" 2>/dev/null)
+                        
+                        if [[ -n "$container_mtime" && -n "$service_mtime" && "$container_mtime" -gt "$service_mtime" ]]; then
+                            log_err "[GEN_FAIL] Generator ran but rejected $filename (container file is newer than service file). Check 'journalctl --user -xe' for Quadlet generator output."
+                            validation_failed="true"
+                        fi
+                    fi
+                fi
+            done <<< "$deployed_files"
+        fi
+        
+        if [[ "$validation_failed" == "true" ]]; then
+            return 1
+        else
+            log_success "Deployment applied."
+        fi
     fi
 }
