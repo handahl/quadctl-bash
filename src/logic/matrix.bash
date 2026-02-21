@@ -83,12 +83,6 @@ execute_matrix_view() {
     for unit in $all_units; do
         if [[ "$unit" != "${Q_ARCH_PREFIX}"* ]]; then continue; fi
 
-        # Skip non-container files from table row generation (they may be needed for summary)
-        local unit_basename="${unit%.service}"
-        if [[ ! "$unit_basename" == *".container" ]]; then
-            continue
-        fi
-
         # --- DATA EXTRACTION ---
         local s_active s_sub s_drift s_ts
         if echo "$sys_map" | jq -e --arg k "$unit" 'has($k)' >/dev/null; then
@@ -244,6 +238,6 @@ execute_matrix_view() {
 
     # 7. HINTS FOOTER
     echo "----------------------------------------------------------------------------------------------------------------"
-    echo -e "commands: ${Q_COLOR_YELLOW}s${Q_COLOR_RESET}tatus update | ${Q_COLOR_YELLOW}a${Q_COLOR_RESET}ll services | ${Q_COLOR_YELLOW}rd${Q_COLOR_RESET} reload daemon | ${Q_COLOR_YELLOW}dry${Q_COLOR_RESET} run deployment | ${Q_COLOR_YELLOW}shell${Q_COLOR_RESET} / ${Q_COLOR_YELLOW}q${Q_COLOR_RESET}uit"
+    echo -e "commands: ${Q_COLOR_YELLOW}s${Q_COLOR_RESET}tatus update | ${Q_COLOR_YELLOW}a${Q_COLOR_RESET}ll services | ${Q_COLOR_YELLOW}dr${Q_COLOR_RESET} daemon reload | ${Q_COLOR_YELLOW}dry${Q_COLOR_RESET}-run deployment | ${Q_COLOR_YELLOW}shell${Q_COLOR_RESET} / ${Q_COLOR_YELLOW}q${Q_COLOR_RESET}uit"
     echo ""
 }
