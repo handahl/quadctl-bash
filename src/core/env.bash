@@ -3,8 +3,8 @@
 # FILE: env.bash
 # PATH: src/core/env.bash
 # PROJECT: quadctl
-# VERSION: 10.7.0
-# DATE: 2026-01-18
+# VERSION: 11.1.0
+# DATE: 2026-03-04
 # DESCRIPTION: Global variable definitions, Prefix Governance, and Logging.
 # ==============================================================================
 
@@ -31,6 +31,46 @@ else
     export Q_ARCH_PREFIX="${QUADCTL_PREFIX}"
     export Q_ENV_WARNING="false"
 fi
+
+# 3b. PLATFORM DETECTION (informational — not a gate)
+# ------------------------------------------------------------------------------
+# Q_PLATFORM: fedora-atomic | fedora | rocky | rhel | rhel-like | fedora-like | unknown
+# Q_NODE_TIER: preferred | compat | unknown
+# Consumed by deps.bash for tiered version warnings; available to all modules.
+# ------------------------------------------------------------------------------
+_detect_platform() {
+    local os_id="" os_like=""
+    if [[ -r /etc/os-release ]]; then
+        os_id=$(. /etc/os-release 2>/dev/null && echo "${ID:-}")
+        os_like=$(. /etc/os-release 2>/dev/null && echo "${ID_LIKE:-}")
+    fi
+    case "$os_id" in
+        fedora)
+            if [[ -f /run/ostree-booted || -f /ostree/repo/config ]]; then
+                echo "fedora-atomic"
+            else
+                echo "fedora"
+            fi ;;
+        rocky)  echo "rocky" ;;
+        rhel)   echo "rhel"  ;;
+        *)
+            case "$os_like" in
+                *rhel*|*centos*) echo "rhel-like"    ;;
+                *fedora*)        echo "fedora-like"  ;;
+                *)               echo "unknown"      ;;
+            esac ;;
+    esac
+}
+
+export Q_PLATFORM
+Q_PLATFORM=$(_detect_platform)
+unset -f _detect_platform
+
+case "$Q_PLATFORM" in
+    fedora-atomic|fedora|fedora-like) export Q_NODE_TIER="preferred" ;;
+    rocky|rhel|rhel-like)             export Q_NODE_TIER="compat"    ;;
+    *)                                export Q_NODE_TIER="unknown"   ;;
+esac
 
 # 4. PATH DEFINITIONS
 # ------------------------------------------------------------------------------

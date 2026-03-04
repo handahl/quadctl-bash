@@ -3,9 +3,12 @@
 # FILE: deps.bash
 # PATH: src/core/deps.bash
 # PROJECT: quadctl
-# VERSION: 11.0.1
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Runtime dependency verification with Semantic Version enforcement.
+# VERSION: 11.1.0
+# DESCRIPTION: Runtime dependency verification with tiered Semantic Version floors.
+#
+# Two-tier model per ai.restraints.md:
+#   preferred: full feature set (Fedora Atomic / han3, han1)
+#   compat:    minimum viable (Rocky 9 / han3-vps) — warn, do not fail
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -28,7 +31,35 @@ vercomp() {
 }
 
 # ------------------------------------------------------------------------------
+# check_version_tiered
+# Usage: check_version_tiered "ToolName" "CurrentVer" "MinimumVer" "PreferredVer"
+# Returns: 0 = ok, 1 = below preferred (warn), 2 = below minimum (fail)
+# ------------------------------------------------------------------------------
+check_version_tiered() {
+    local tool="$1"
+    local current="$2"
+    local minimum="$3"
+    local preferred="$4"
+
+    vercomp "$current" "$minimum"
+    if [[ $? -eq 2 ]]; then
+        log_err "$tool $current is below minimum viable floor ($minimum). Cannot continue."
+        return 2
+    fi
+
+    vercomp "$current" "$preferred"
+    if [[ $? -eq 2 ]]; then
+        log_warn "$tool $current is below preferred version ($preferred). Running on compat tier."
+        log_warn "  Full feature set available at $preferred+. Proceeding."
+        return 1
+    fi
+
+    return 0
+}
+
+# ------------------------------------------------------------------------------
 # check_version_constraint
+# Legacy single-floor check. Used only for hard-required tools (jq, curl, etc.)
 # Usage: check_version_constraint "ToolName" "CurrentVer" "RequiredVer"
 # ------------------------------------------------------------------------------
 check_version_constraint() {
@@ -40,10 +71,9 @@ check_version_constraint() {
     local result=$?
 
     if [[ $result -eq 2 ]]; then
-        # current < required
-        log_err "   $tool version mismatch."
-        log_err "   Required: >= $required"
-        log_err "   Found:       $current"
+        log_err "$tool version mismatch."
+        log_err "  Required: >= $required"
+        log_err "  Found:       $current"
         return 1
     fi
     return 0
@@ -83,30 +113,33 @@ check_runtime_dependencies() {
     fi
 
     # --------------------------------------------------------------------------
-    # STRICT VERSION ENFORCEMENT
+    # TIERED VERSION ENFORCEMENT  (ai.restraints.md)
+    # Minimum = fail below, Preferred = warn below (compat tier)
     # --------------------------------------------------------------------------
-    
-    # 1. BASH (>= 5.3.0)
+
+    # 1. BASH
     # BASH_VERSION is an internal variable, e.g., "5.3.0(1)-release"
     local bash_v_clean=${BASH_VERSION%%[^0-9.]*}
-    if ! check_version_constraint "Bash" "$bash_v_clean" "5.3.0"; then
-        # Soften blow for dev environments, but warn loudly
-        log_warn "Bash version is below spec (5.3.0). Proceeding with caution."
-    fi
+    local bash_rc
+    check_version_tiered "Bash" "$bash_v_clean" "5.0.0" "5.2.0"
+    bash_rc=$?
+    [[ $bash_rc -eq 2 ]] && exit 1
 
-    # 2. SYSTEMD (>= 258)
+    # 2. SYSTEMD
     # Output: "systemd 258 (258.3-2.fc43)"
     local sysd_v
     sysd_v=$(systemctl --version | head -n1 | awk '{print $2}')
-    if ! check_version_constraint "systemd" "$sysd_v" "258"; then
-        log_warn "systemd version ($sysd_v) is below spec (258). Quadlet features may fail."
-    fi
+    local sysd_rc
+    check_version_tiered "systemd" "$sysd_v" "252" "255"
+    sysd_rc=$?
+    [[ $sysd_rc -eq 2 ]] && exit 1
 
-    # 3. PODMAN (>= 5.7.1)
+    # 3. PODMAN
     # Output: "podman version 5.7.1"
     local pod_v
     pod_v=$(podman --version | awk '{print $3}')
-    if ! check_version_constraint "Podman" "$pod_v" "5.7.1"; then
-        exit 1
-    fi
+    local pod_rc
+    check_version_tiered "Podman" "$pod_v" "4.4.0" "5.0.0"
+    pod_rc=$?
+    [[ $pod_rc -eq 2 ]] && exit 1
 }

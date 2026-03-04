@@ -76,11 +76,10 @@ api_systemd_reload() {
 }
 
 api_systemd_verify_generator() {
-    local gen="/usr/lib/systemd/system-generators/podman-system-generator"
-    if [[ -x "$gen" ]]; then
-        "$gen" --user --dryrun 2>&1
-    else
-        echo "Generator binary not found at $gen"
+    local gen
+    gen=$(discover_quadlet_generator) || {
+        echo "Quadlet generator not found. Checked: user-generators, system-generators, /usr/libexec/podman/quadlet"
         return 1
-    fi
+    }
+    "$gen" --user --dryrun 2>&1
 }

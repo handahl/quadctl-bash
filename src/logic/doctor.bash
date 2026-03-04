@@ -34,16 +34,11 @@ check_systemd_linkage() {
 # ------------------------------------------------------------------------------
 # check_generator_status
 # Verify Podman Quadlet generator binary exists and is executable.
-# Returns 0 if present, 1 if missing.
+# Uses discover_quadlet_generator() — no hardcoded paths.
+# Returns 0 if found, 1 if missing.
 # ------------------------------------------------------------------------------
 check_generator_status() {
-    local generator="/usr/lib/systemd/system-generators/podman-system-generator"
-
-    if [[ -x "$generator" ]]; then
-        return 0
-    fi
-
-    return 1
+    discover_quadlet_generator &>/dev/null
 }
 
 execute_doctor() {
@@ -61,10 +56,11 @@ execute_doctor() {
     # 2. QUADLET GENERATOR
     # --------------------------------------------------------------------------
     echo -n ":: Quadlet Generator...   "
-    if check_generator_status; then
-        echo "${Q_COLOR_GREEN}[OK]${Q_COLOR_RESET}"
+    local gen_path
+    if gen_path=$(discover_quadlet_generator 2>/dev/null); then
+        echo "${Q_COLOR_GREEN}[OK]${Q_COLOR_RESET}   $gen_path"
     else
-        echo "${Q_COLOR_RED}[FAIL]${Q_COLOR_RESET} - Generator not found at /usr/lib/systemd/system-generators/podman-system-generator"
+        echo "${Q_COLOR_RED}[FAIL]${Q_COLOR_RESET} - Generator not found. Install podman-quadlet or equivalent for this distribution."
     fi
 
     # 3. JOB QUEUE

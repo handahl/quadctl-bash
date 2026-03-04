@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-## FILE: quadctl/src/core/utils.bash |   VERSION: 10.7.0   |   DATE: 2026-02-06
+## FILE: quadctl/src/core/utils.bash |   VERSION: 11.1.0   |   DATE: 2026-03-04
 # ==============================================================================
 
 # Portable search: rg (if available) vs grep -E
@@ -24,6 +24,31 @@ expand_specifiers() {
     # Also handle the standard shell tilde
     input="${input/#\~/$HOME}"
     echo "$input"
+}
+
+# ------------------------------------------------------------------------------
+# discover_quadlet_generator
+# Locates the Quadlet generator binary across known distribution layouts.
+# Prints the path to stdout. Returns 1 if not found.
+#
+# Discovery order (per ai.restraints.md):
+#   1. /usr/lib/systemd/user-generators/podman-user-generator  (Fedora 5.x+)
+#   2. /usr/lib/systemd/system-generators/podman-system-generator (Fedora/Rocky)
+#   3. /usr/libexec/podman/quadlet                              (alternative layout)
+# ------------------------------------------------------------------------------
+discover_quadlet_generator() {
+    local candidates=(
+        "/usr/lib/systemd/user-generators/podman-user-generator"
+        "/usr/lib/systemd/system-generators/podman-system-generator"
+        "/usr/libexec/podman/quadlet"
+    )
+    for path in "${candidates[@]}"; do
+        if [[ -x "$path" ]]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    return 1
 }
 
 check_git_status() {

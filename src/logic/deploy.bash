@@ -145,9 +145,10 @@ execute_deploy() {
 
     # --- STAGE 3: GENERATOR VALIDATION ---
     log_info "validating intent files..."
-    local generator="/usr/lib/systemd/system-generators/podman-system-generator"
+    local generator
+    generator=$(discover_quadlet_generator 2>/dev/null) || true
 
-    if [[ -x "$generator" ]]; then
+    if [[ -n "$generator" && -x "$generator" ]]; then
         local output
         output=$("$generator" --user --dryrun 2>&1 || true)
 
