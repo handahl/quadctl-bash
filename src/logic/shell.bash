@@ -18,8 +18,8 @@ source "${INSTALL_ROOT}/src/ui/help.bash"
 execute_shell() {
     local initial_args="$*"
     
-    log_info "Entering Quadctl Interactive Shell..."
-    echo "Type 'help' for commands, 'exit' to quit."
+    echo "Entering quadctl interactive shell..."
+    log_info "Type 'help' for commands, 'exit' to quit."
     
     if [[ -n "$initial_args" ]]; then
         run_repl_cmd $initial_args
@@ -55,7 +55,7 @@ run_repl_cmd() {
     case "$cmd" in
         exit|quit|q)
             if [[ "${#cmd_arr[@]}" -eq 1 ]]; then
-                echo "Bye."
+                echo "quadctl out."
                 exit 0
             fi
             execute_matrix_view "all"
