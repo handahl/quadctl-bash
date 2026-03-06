@@ -47,7 +47,7 @@ if [[ ! "${1:-}" =~ ^(-h|--help|-v|--version|shell|s)$ ]]; then
 fi
 
 # 4. COMMAND ROUTING
-cmd="${1:-status}"
+cmd="${1:-shell}"
 shift || true
 
 parse_filter() {
@@ -130,3 +130,9 @@ case "$cmd" in
         exit 1
         ;;
 esac
+
+# After a non-interactive command, drop into the REPL if stdout is a tty
+if [[ -t 1 && "$cmd" != "shell" && "$cmd" != "s" && "$cmd" != "help" && "$cmd" != "--help" && "$cmd" != "-h" && "$cmd" != "version" && "$cmd" != "--version" && "$cmd" != "-v" ]]; then
+    source "${INSTALL_ROOT}/src/logic/shell.bash"
+    execute_shell
+fi

@@ -17,17 +17,18 @@ source "${INSTALL_ROOT}/src/ui/help.bash"
 
 execute_shell() {
     local initial_args="$*"
-    
+
+    trap '' INT
+    trap 'echo -e "\n${Q_COLOR_YELLOW}[Shell] Use exit/quit to leave.${Q_COLOR_RESET}";' SIGINT
+
     echo "Entering quadctl interactive shell..."
     log_info "Type 'help' for commands, 'exit' to quit."
-    
+
     if [[ -n "$initial_args" ]]; then
         run_repl_cmd $initial_args
     else
         execute_matrix_view "standard"
     fi
-
-    trap 'echo -e "\n${Q_COLOR_YELLOW}[Shell] Use exit/quit to leave.${Q_COLOR_RESET}";' SIGINT
 
     local history_file="${XDG_STATE_HOME:-$HOME/.local/state}/quadctl_history"
     touch "$history_file"
@@ -39,7 +40,7 @@ execute_shell() {
         [[ -z "$input" ]] && continue
         echo "$input" >> "$history_file"
 
-        run_repl_cmd $input
+        run_repl_cmd $input || true
     done
     
     trap - SIGINT
@@ -150,7 +151,10 @@ run_repl_cmd() {
                 log_success "Reloaded."
             fi
             ;;
-        start|stop|restart|reload|logs|enable|disable|mask|unmask)
+        logs|log|l)
+            ( trap 'exit 0' INT; execute_control "logs" "$arg" ) || true
+            ;;
+        start|stop|restart|reload|enable|disable|mask|unmask)
             execute_control "$cmd" "$arg"
             ;;
         cat|edit)
