@@ -61,6 +61,8 @@ parse_filter() {
     fi
 }
 
+set +e  # Command routing: failures are handled per-command
+
 case "$cmd" in
     # --- INSPECTION & EDITING ---
     cat)

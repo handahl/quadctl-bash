@@ -20,7 +20,6 @@ vercomp() {
     if [[ "$1" == "$2" ]]; then return 0; fi
     local IFS=.
     local i ver1=($1) ver2=($2)
-    # Fill empty fields in ver1 with zeros
     for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do ver1[i]=0; done
     for ((i=0; i<${#ver1[@]}; i++)); do
         if [[ -z ${ver2[i]} ]]; then ver2[i]=0; fi
@@ -41,14 +40,14 @@ check_version_tiered() {
     local minimum="$3"
     local preferred="$4"
 
-    vercomp "$current" "$minimum"
-    if [[ $? -eq 2 ]]; then
+    vercomp "$current" "$minimum" && local _r=$? || local _r=$?
+    if [[ $_r -eq 2 ]]; then
         log_err "$tool $current is below minimum viable floor ($minimum). Cannot continue."
         return 2
     fi
 
-    vercomp "$current" "$preferred"
-    if [[ $? -eq 2 ]]; then
+    vercomp "$current" "$preferred" && local _r=$? || local _r=$?
+    if [[ $_r -eq 2 ]]; then
         log_warn "$tool $current is below preferred version ($preferred). Running on compat tier."
         log_warn "  Full feature set available at $preferred+. Proceeding."
         return 1
@@ -67,10 +66,8 @@ check_version_constraint() {
     local current="$2"
     local required="$3"
 
-    vercomp "$current" "$required"
-    local result=$?
-
-    if [[ $result -eq 2 ]]; then
+    vercomp "$current" "$required" && local _r=$? || local _r=$?
+    if [[ $_r -eq 2 ]]; then
         log_err "$tool version mismatch."
         log_err "  Required: >= $required"
         log_err "  Found:       $current"
@@ -142,4 +139,5 @@ check_runtime_dependencies() {
     check_version_tiered "Podman" "$pod_v" "4.4.0" "5.0.0"
     pod_rc=$?
     [[ $pod_rc -eq 2 ]] && exit 1
+    return 0   # ← add this
 }

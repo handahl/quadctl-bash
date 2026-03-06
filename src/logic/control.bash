@@ -24,7 +24,11 @@ verify_unit_exists() {
 
     if [[ "$load_state" == "not-found" ]] || [[ "$load_state" == "masked" && "$load_state" != "loaded" ]]; then
         log_err "Unit '$unit' does not exist or is not loaded." >&2
-        log_info "Try: systemctl --user list-unit-files '$unit*'" >&2
+        if [[ "$unit" == "${Q_ARCH_PREFIX}"* ]]; then
+            log_info "Try: systemctl --user list-unit-files '${unit}*'" >&2
+        else
+            log_info "Try: systemctl --user list-unit-files '${Q_ARCH_PREFIX}${unit}*'" >&2
+        fi
         return 1
     fi
 

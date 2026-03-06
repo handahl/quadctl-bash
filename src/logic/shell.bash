@@ -16,6 +16,7 @@ source "${INSTALL_ROOT}/src/logic/audit.bash"
 source "${INSTALL_ROOT}/src/ui/help.bash"
 
 execute_shell() {
+    set +e  # REPL context: per-command error handling, not process-fatal
     local initial_args="$*"
 
     trap '' INT
@@ -155,7 +156,7 @@ run_repl_cmd() {
             ( trap 'exit 0' INT; execute_control "logs" "$arg" ) || true
             ;;
         start|stop|restart|reload|enable|disable|mask|unmask)
-            execute_control "$cmd" "$arg"
+            execute_control "$cmd" "$arg" || true
             ;;
         cat|edit)
              source "${INSTALL_ROOT}/src/logic/interact.bash"
