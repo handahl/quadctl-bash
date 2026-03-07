@@ -25,9 +25,9 @@ verify_unit_exists() {
     if [[ "$load_state" == "not-found" ]] || [[ "$load_state" == "masked" && "$load_state" != "loaded" ]]; then
         log_err "Unit '$unit' does not exist or is not loaded." >&2
         if [[ "$unit" == "${Q_ARCH_PREFIX}"* ]]; then
-            log_info "Try: systemctl --user list-unit-files '${unit}*'" >&2
+            log_info "try: systemctl --user list-unit-files '${unit}*'" >&2
         else
-            log_info "Try: systemctl --user list-unit-files '${Q_ARCH_PREFIX}${unit}*'" >&2
+            log_info "try: systemctl --user list-unit-files '${Q_ARCH_PREFIX}${unit}*'" >&2
         fi
         return 1
     fi
@@ -68,11 +68,11 @@ check_dependencies() {
     done <<< "$deps"
 
     if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        log_err "Missing dependencies for '$unit':" >&2
+        log_err "missing dependencies for '$unit':" >&2
         for missing in "${missing_deps[@]}"; do
             echo "   - $missing" >&2
         done
-        log_info "Run 'quadctl deploy' to synchronize state, then 'systemctl --user daemon-reload'" >&2
+        log_info "run 'quadctl deploy' to synchronize state" >&2
         return 1
     fi
 
@@ -112,7 +112,7 @@ select_unit_interactive() {
     units=$(systemctl --user list-units "${Q_ARCH_PREFIX}*" --no-legend --plain | awk '{print $1}')
     
     if [[ -z "$units" ]]; then
-        log_warn "No units found."
+        log_warn "no units found."
         return 1
     fi
 
@@ -126,11 +126,11 @@ select_unit_interactive() {
 analyze_start_failure() {
     local unit="$1"
     echo ""
-    log_warn "Analyzing failure for $unit..."
+    log_warn "analyzing failure for $unit..."
 
     # 1. Check Dependencies (Reverse)
     # What does this unit need that might be broken?
-    echo ":: Checking dependencies..."
+    echo ":: checking dependencies..."
     local deps
     # List dependencies, filter for our prefix to reduce noise
     deps=$(systemctl --user list-dependencies "$unit" --plain --no-legend | grep "$Q_ARCH_PREFIX")
@@ -147,12 +147,12 @@ analyze_start_failure() {
             fi
         done
     else
-        echo "   (No explicit architecture dependencies found)"
+        echo "   (no explicit architecture dependencies found)"
     fi
 
     # 2. Check Journal (Recent)
     echo ""
-    echo ":: Recent Logs (Last 10 lines):"
+    echo ":: recent logs (last 10 lines):"
     journalctl --user -u "$unit" -n 10 --no-pager -o cat | sed 's/^/   | /'
 }
 
@@ -180,11 +180,11 @@ execute_control() {
     case "$action" in
         rd|reload-daemon)
             local start_ts=$(date +%s%N)
-            log_info "Reloading systemd user daemon..."
+            log_info "reloading systemd --user daemon..."
             api_systemd_reload
             local end_ts=$(date +%s%N)
             local dur=$(( (end_ts - start_ts) / 1000000 ))
-            log_success "Daemon reloaded in ${dur}ms."
+            log_success "daemon reloaded in ${dur}ms."
             return 0
             ;;
     esac
@@ -195,7 +195,7 @@ execute_control() {
             target=$(select_unit_interactive)
             [[ -z "$target" ]] && return 1
         else
-            log_err "Target required. Usage: quadctl $action <unit>"
+            log_err "target required. usage: quadctl $action <unit>"
             return 1
         fi
     fi
@@ -205,7 +205,7 @@ execute_control() {
 
     # Safety Check for destructive commands
     if [[ "$action" == "mask" ]]; then
-        log_warn "Masking unit $unit. This will prevent it from starting."
+        log_warn "masking unit $unit to prevent it from starting."
     fi
 
     # 3. Handle Actions
@@ -227,7 +227,7 @@ execute_control() {
                 source "${INSTALL_ROOT}/src/logic/debug.bash"
                 execute_debug "$unit"
              else
-                log_err "Debug module missing."
+                log_err "debug module missing."
              fi
              ;;
         start)
@@ -237,26 +237,26 @@ execute_control() {
 
             # IDEMPOTENCY CHECK
             if systemctl --user is-active --quiet "$unit"; then
-                log_info "Unit '$unit' is already active. No action taken."
+                log_info "Unit '$unit' is already active, no action taken."
                 return 0
             fi
 
             local start_ts=$(date +%s%N)
-            log_info "Starting $unit..."
+            log_info "starting $unit..."
 
             # Show dependencies that are being activated (Informational)
             local implies
             implies=$(systemctl --user list-dependencies "$unit" --plain --no-legend 2>/dev/null | grep "$Q_ARCH_PREFIX" | grep -v "$unit" || true)
             if [[ -n "$implies" ]]; then
-                echo ":: Also activating dependencies:"
+                echo ":: also activating the following dependencies:"
                 echo "$implies" | sed 's/^/   + /'
             fi
 
             if systemctl --user start "$unit"; then
                  local end_ts=$(date +%s%N)
-                 log_success "Started $unit ($(( (end_ts - start_ts) / 1000000 ))ms)."
+                 log_success "started $unit ($(( (end_ts - start_ts) / 1000000 ))ms)."
             else
-                 log_err "Failed to start $unit."
+                 log_err "failed to start $unit."
                  analyze_start_failure "$unit"
                  return 1
             fi
@@ -267,33 +267,33 @@ execute_control() {
             check_dependencies "$unit" || return 1
 
             local start_ts=$(date +%s%N)
-            log_info "Restarting $unit..."
+            log_info "restarting $unit..."
 
             if systemctl --user restart "$unit"; then
                 local end_ts=$(date +%s%N)
                 local dur=$(( (end_ts - start_ts) / 1000000 ))
-                log_success "Restarted $unit (${dur}ms)."
+                log_success "restarted $unit (${dur}ms)."
             else
-                log_err "Failed to restart $unit."
+                log_err "failed to restart $unit."
                 analyze_start_failure "$unit"
                 return 1
             fi
             ;;
         stop|reload|enable|disable|mask|unmask)
             local start_ts=$(date +%s%N)
-            log_info "Exec: systemctl --user $action $unit"
+            log_info "executing 'systemctl --user $action $unit'"
 
             if systemctl --user "$action" "$unit"; then
                 local end_ts=$(date +%s%N)
                 local dur=$(( (end_ts - start_ts) / 1000000 ))
-                log_success "Operation '$action' on '$unit' succeeded (${dur}ms)."
+                log_success "action succeeded in ${dur}ms."
             else
-                log_err "Operation '$action' failed."
+                log_err "action failed."
                 return 1
             fi
             ;;
         *)
-            log_err "Unsupported control action: $action"
+            log_err "unsupported action: $action"
             return 1
             ;;
     esac

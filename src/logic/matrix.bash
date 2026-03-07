@@ -71,9 +71,9 @@ execute_matrix_view() {
     fi
 
     # 4. HEADER
-    printf "%-23s %-8s %-10s %-10s %-8s %-10s %-12s %s\n" \
+    printf "%-27s %-8s %-10s %-10s %-8s %-10s %-12s %s\n" \
         "UNITNAME" "DRIFT" "STATE" "SUB" "UPTIME" "HEALTH" "VERSION" "ROUTING"
-    printf "%s\n" "-------------------------------------------------------------------------------------------------------------"
+    printf "%s\n" "-----------------------------------------------------------------------------------------------------------------"
 
     # Buffers for sorting
     local lines_services=()
@@ -208,10 +208,10 @@ execute_matrix_view() {
         
         # If line_color is set (critical state), override all colors
         if [[ -n "$line_color" ]]; then
-            line_output=$(printf "%b%-23s %-8s %-10s %-10s %-8s %-10s %-12s %s%b" \
+            line_output=$(printf "%b%-27s %-8s %-10s %-10s %-8s %-10s %-12s %s%b" \
                 "$line_color" "$clean_name" "$d_val" "$s_active" "$display_sub" "$uptime_str" "$p_health" "$p_image" "$p_ports" "$Q_COLOR_RESET")
         else
-            line_output=$(printf "%-23s %b%-8s%b %b%-10s%b %-10s %-8s %b%-10s%b %-12s %s" \
+            line_output=$(printf "%-27s %b%-8s%b %b%-10s%b %-10s %-8s %b%-10s%b %-12s %s" \
                 "$clean_name" \
                 "$c_drift" "$d_val" "$Q_COLOR_RESET" \
                 "$c_state" "$s_active" "$Q_COLOR_RESET" \
@@ -237,7 +237,7 @@ execute_matrix_view() {
     fi
 
     # 7. HINTS FOOTER
-    echo "---------------------------------------------------------------------------------------------------------------"
+    echo "-------------------------------------------------------------------------------------------------------------------"
     echo -e "commands: ${Q_COLOR_YELLOW}s${Q_COLOR_RESET}tatus update | ${Q_COLOR_YELLOW}a${Q_COLOR_RESET}ll services | ${Q_COLOR_YELLOW}dr${Q_COLOR_RESET} daemon reload | ${Q_COLOR_YELLOW}dry${Q_COLOR_RESET}-run deployment | ${Q_COLOR_YELLOW}shell${Q_COLOR_RESET} / ${Q_COLOR_YELLOW}q${Q_COLOR_RESET}uit"
     echo ""
 }

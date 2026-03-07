@@ -78,7 +78,7 @@ api_systemd_reload() {
 api_systemd_verify_generator() {
     local gen
     gen=$(discover_quadlet_generator) || {
-        echo "Quadlet generator not found. Checked: user-generators, system-generators, /usr/libexec/podman/quadlet"
+        echo "Quadlet generator not found."
         return 1
     }
     "$gen" --user --dryrun 2>&1

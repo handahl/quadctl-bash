@@ -17,14 +17,14 @@ execute_audit() {
     # Temporarily relax strict mode to allow error accumulation
     set +e
     
-    log_info "Auditing intent directory: $Q_SRC_DIR"
+    log_info "auditing intent directory: $Q_SRC_DIR"
     
     local errors=0
     local warnings=0
     
     # 1. Check if Intent Directory Exists
     if [[ ! -d "$Q_SRC_DIR" ]]; then
-        log_err "[CRITICAL] Intent directory not found: $Q_SRC_DIR"
+        log_err "intent directory not found: $Q_SRC_DIR"
         return 1
     fi
 
@@ -35,7 +35,7 @@ execute_audit() {
         
         # A. Prefix Check
         if [[ "$unit_name" != "${Q_ARCH_PREFIX}"* ]]; then
-            log_warn "[STYLE] Unit '$unit_name' does not strictly follow prefix '${Q_ARCH_PREFIX}'"
+            log_warn "naming format for unit '$unit_name' does not follow prefix pattern: '${Q_ARCH_PREFIX}'"
             ((warnings++))
         fi
 
@@ -68,13 +68,13 @@ execute_audit() {
                 # 5. Check existence
                 if [[ ! -f "$resolved_path" ]]; then
                     if [[ "$is_optional" == "true" ]]; then
-                        log_warn "[OPTIONAL] Missing EnvironmentFile in '$unit_name'"
-                        echo "   Reference: '$ref' (Marked as optional '-')"
+                        log_warn "missing optional EnvironmentFile in '$unit_name'"
+                        echo "   reference: '$ref' (marked as optional '-')"
                         ((warnings++))
                     else
-                        log_err "[CRITICAL] Missing EnvironmentFile in '$unit_name'"
-                        echo "   Reference: '$ref'"
-                        echo "   File does not exist on system"
+                        log_err "missing necessary EnvironmentFile in '$unit_name'"
+                        echo "   reference: '$ref'"
+                        echo "   file does not exist on system"
                         ((errors++))
                     fi
                 fi
@@ -91,8 +91,8 @@ execute_audit() {
                      resolved_secret=$(echo "$resolved_secret" | cut -d, -f1)
                      
                      if [[ ! -e "$resolved_secret" ]]; then
-                        log_err "[CRITICAL] Missing Secret source in '$unit_name'"
-                        echo "   Reference: '$resolved_secret'"
+                        log_err "missing necessary secret source in '$unit_name'"
+                        echo "   reference: '$resolved_secret'"
                         ((errors++))
                      fi
                 fi
@@ -103,11 +103,11 @@ execute_audit() {
 
     # Summary
     if [[ $errors -gt 0 ]]; then
-        log_err "Audit failed with $errors error(s) and $warnings warning(s)."
+        log_err "audit failed with $errors error(s) and $warnings warning(s)."
         set -e
         return 1
     else
-        echo "Audit passed. ($warnings warnings)"
+        echo "audit passed. ($warnings warnings)"
         set -e
         return 0
     fi

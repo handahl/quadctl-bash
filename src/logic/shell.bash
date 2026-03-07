@@ -16,7 +16,6 @@ source "${INSTALL_ROOT}/src/logic/audit.bash"
 source "${INSTALL_ROOT}/src/ui/help.bash"
 
 execute_shell() {
-    set +e  # REPL context: per-command error handling, not process-fatal
     local initial_args="$*"
 
     trap '' INT
@@ -167,7 +166,7 @@ run_repl_cmd() {
             clear
             ;;
         *)
-            log_err "Unknown command: $cmd"
+            log_err "unknown command: $cmd"
             ;;
     esac
 }

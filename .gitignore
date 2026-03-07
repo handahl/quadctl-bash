@@ -1,4 +1,9 @@
 ```
+.bck
+.tmp
+.code-workspace
+quadctl.go/
+
 # Compiled and build artifacts
 *.pyc
 __pycache__/

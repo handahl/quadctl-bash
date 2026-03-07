@@ -10,7 +10,7 @@
 
 # 1. VERSIONING & IDENTITY
 # ------------------------------------------------------------------------------
-export Q_VERSION="11.0.0"
+export Q_VERSION="11.1.0"
 
 # 2. XDG STANDARDS & DEFAULTS
 # ------------------------------------------------------------------------------
@@ -25,7 +25,7 @@ export Q_VERSION="11.0.0"
 # but proceed with the safe default.
 
 if [[ -z "${QUADCTL_PREFIX:-}" ]]; then
-    export Q_ARCH_PREFIX="hanlab-"
+    export Q_ARCH_PREFIX="homelab-"
     export Q_ENV_WARNING="true" 
 else
     export Q_ARCH_PREFIX="${QUADCTL_PREFIX}"
@@ -117,7 +117,7 @@ log_err()     { echo "${Q_COLOR_RED}[ERR]${Q_COLOR_RESET}  $1" >&2; }
 # If we detected an unset prefix in interactive mode, warn the user now.
 if [[ "$Q_ENV_WARNING" == "true" && -t 1 && "${Q_SILENT_ENV:-0}" == "0" ]]; then
     # We use a distinct format to separate it from standard logs
-    echo -e "${Q_COLOR_YELLOW}:: [quadctl} Defaulting prefix to '${Q_ARCH_PREFIX}'${Q_COLOR_RESET}" >&2
+    log_info -e "${Q_COLOR_YELLOW}:: Defaulting prefix to '${Q_ARCH_PREFIX}'${Q_COLOR_RESET}" >&2
     echo -e "${Q_COLOR_YELLOW}   Set QUADCTL_PREFIX in your .bashrc to override.${Q_COLOR_RESET}" >&2
 fi
 
