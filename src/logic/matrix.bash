@@ -55,7 +55,7 @@ execute_matrix_view() {
             if [[ "$filename" == "$Q_ARCH_PREFIX"* ]]; then
                  disk_units+=("${stem}.service")
             fi
-        done < <(find "$Q_CONFIG_DIR" -maxdepth 2 -name "*.container" -o -name "*.network" -o -name "*.volume")
+        done < <(find "$Q_CONFIG_DIR" -maxdepth 2 -name "*.container") # -o -name "*.network" -o -name "*.volume")
     fi
 
     # 3. MERGE LISTS (Union: Disk + Systemd)
