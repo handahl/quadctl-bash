@@ -1,69 +1,71 @@
 #!/usr/bin/env bash
-# Logic: Tree View
-# Author: SAC-CP (v2.1)
-# Description: Renders a hierarchical view of Pods and Containers.
+# ==============================================================================
+# FILE: tree.bash
+# PATH: src/logic/tree.bash
+# PROJECT: quadctl
+# DESCRIPTION: Hierarchical view of Pods and their constituent containers.
+# ==============================================================================
 
 execute_tree_view() {
-    log_info "Generating Quadlet Tree..."
-    
-    # Header
-    printf "%-30s %-12s %-20s %s\n" "RESOURCE" "STATE" "UPTIME" "PORTS"
-    echo "--------------------------------------------------------------------------------"
-
-    # Check for jq
-    if ! command -v jq &> /dev/null; then
-        log_err "The 'tree' command requires 'jq' to parse hierarchy."
+    if ! command -v jq &>/dev/null; then
+        log_err "'tree' requires jq."
         return 1
     fi
 
-    local pods_json
-    pods_json=$(podman pod ps --format json)
-    
-    local containers_json
-    containers_json=$(podman ps -a --format json)
+    printf "%-30s %-12s %-20s %s\n" "RESOURCE" "STATE" "UPTIME" "PORTS"
+    printf '%0.s─' {1..80}; echo
 
-    # If no pods/containers, plain exit
+    local pods_json containers_json
+    pods_json=$(podman pod ps --format json 2>/dev/null || echo "[]")
+    containers_json=$(podman ps -a --format json 2>/dev/null || echo "[]")
+
     if [[ "$pods_json" == "[]" && "$containers_json" == "[]" ]]; then
         echo "No resources found."
         return 0
     fi
 
-    # --- Process Pods ---
+    # --- Pods and their members ---
     local pod_ids
-    pod_ids=$(echo "$pods_json" | jq -r '.[]? | .Id')
-    
+    # Fix: `podman pod ps --format json` returns an array; select() must iterate with .[]
+    pod_ids=$(echo "$pods_json" | jq -r '.[] | .Id' 2>/dev/null)
+
     if [[ -n "$pod_ids" ]]; then
         while IFS= read -r pod_id; do
-            local pod_name pod_status pod_obj
-            
-            pod_obj=$(echo "$pods_json" | jq -r --arg id "$pod_id" 'select(.Id == $id)')
-            pod_name=$(echo "$pod_obj" | jq -r '.Name')
-            pod_status=$(echo "$pod_obj" | jq -r '.Status')
-            
-            # Pod Output
-            printf "📦 %-27s \033[1m%-12s\033[0m %-20s %s\n" "$pod_name" "$pod_status" "-" "-"
+            [[ -z "$pod_id" ]] && continue
 
-            # Find containers in this pod
+            local pod_name pod_status
+            pod_name=$(echo   "$pods_json" | jq -r --arg id "$pod_id" '.[] | select(.Id == $id) | .Name')
+            pod_status=$(echo "$pods_json" | jq -r --arg id "$pod_id" '.[] | select(.Id == $id) | .Status')
+
+            printf "📦 %-27s ${Q_COLOR_BOLD}%-12s${Q_COLOR_RESET} %-20s %s\n" \
+                "$pod_name" "$pod_status" "-" "-"
+
+            # Fix: containers_json is an array; select() must iterate with .[]
             local pod_containers
-            pod_containers=$(echo "$containers_json" | jq -r --arg pid "$pod_id" 'select(.Pod == $pid) | .Id')
-            
+            pod_containers=$(echo "$containers_json" | \
+                jq -r --arg pid "$pod_id" '.[] | select(.Pod == $pid) | .Id' 2>/dev/null)
+
             if [[ -n "$pod_containers" ]]; then
                 while IFS= read -r cid; do
+                    [[ -z "$cid" ]] && continue
                     _render_container_row "$cid" "$containers_json" "  ├─"
                 done <<< "$pod_containers"
             fi
-            
+
         done <<< "$pod_ids"
     fi
 
-    # --- Process Standalone Containers ---
+    # --- Standalone containers (not in any pod) ---
     local standalone_ids
-    standalone_ids=$(echo "$containers_json" | jq -r 'select(.Pod == "" or .Pod == null) | .Id')
-    
+    # Fix: same array iteration pattern
+    standalone_ids=$(echo "$containers_json" | \
+        jq -r '.[] | select(.Pod == "" or .Pod == null) | .Id' 2>/dev/null)
+
     if [[ -n "$standalone_ids" ]]; then
-        if [[ -n "$pod_ids" ]]; then echo; fi # Spacer
+        [[ -n "$pod_ids" ]] && echo  # visual spacer after pod section
         while IFS= read -r cid; do
-             _render_container_row "$cid" "$containers_json" "🐳"
+            [[ -z "$cid" ]] && continue
+            _render_container_row "$cid" "$containers_json" "🐳"
         done <<< "$standalone_ids"
     fi
 }
@@ -72,44 +74,36 @@ _render_container_row() {
     local cid="$1"
     local json="$2"
     local prefix="$3"
-    
-    local c_obj c_name c_state c_status c_ports
-    c_obj=$(echo "$json" | jq -r --arg id "$cid" 'select(.Id == $id)')
-    c_name=$(echo "$c_obj" | jq -r '.Names[0] // .Name')
-    c_state=$(echo "$c_obj" | jq -r '.State')
-    c_status=$(echo "$c_obj" | jq -r '.Status')
-    
-    # Parse Ports
-    local ports_raw
-    ports_raw=$(echo "$c_obj" | jq -r '.Ports // empty')
-    local ports_display="-"
+
+    local c_name c_state c_status ports_raw ports_display uptime_str state_color
+
+    # Reason: .[] | select() pattern — same fix as above; json is always an array here
+    c_name=$(echo   "$json" | jq -r --arg id "$cid" '.[] | select(.Id == $id) | (.Names[0] // .Name)')
+    c_state=$(echo  "$json" | jq -r --arg id "$cid" '.[] | select(.Id == $id) | .State')
+    c_status=$(echo "$json" | jq -r --arg id "$cid" '.[] | select(.Id == $id) | .Status')
+    ports_raw=$(echo "$json" | jq -r --arg id "$cid" \
+        '.[] | select(.Id == $id) | .Ports // empty' 2>/dev/null)
+
+    ports_display="-"
     if [[ -n "$ports_raw" && "$ports_raw" != "null" ]]; then
-        ports_display=$(echo "$ports_raw" | jq -r 'map(select(.hostPort) | "\(.hostPort):\(.containerPort)") | join(", ")')
-    fi
-    
-    # Calculate Uptime string
-    local uptime_str="-"
-    local uptime_re="Up ([^)]+)"
-    
-    if [[ "$c_status" =~ $uptime_re ]]; then
-        uptime_str="${BASH_REMATCH[1]}"
-    else
-        uptime_str="$c_status"
-    fi
-    
-    # Truncate
-    uptime_str=$(echo "$uptime_str" | xargs)
-    if [[ ${#uptime_str} -gt 20 ]]; then
-        uptime_str="${uptime_str:0:17}..."
+        ports_display=$(echo "$ports_raw" | \
+            jq -r 'map(select(.hostPort) | "\(.hostPort):\(.containerPort)") | join(", ")' \
+            2>/dev/null || echo "-")
     fi
 
-    # Colorize State
-    local state_color=""
+    # Extract relative uptime from status string ("Up 3 hours" → "3 hours")
+    uptime_str="$c_status"
+    if [[ "$c_status" =~ ^Up[[:space:]](.+)$ ]]; then
+        uptime_str="${BASH_REMATCH[1]}"
+    fi
+    uptime_str="${uptime_str:0:20}"
+
     case "$c_state" in
-        running) state_color="\033[32m" ;; # Green
-        exited)  state_color="\033[31m" ;; # Red
-        *)       state_color="\033[33m" ;; # Yellow
+        running) state_color="${Q_COLOR_GREEN}"  ;;
+        exited)  state_color="${Q_COLOR_RED}"    ;;
+        *)       state_color="${Q_COLOR_YELLOW}" ;;
     esac
-    
-    printf "%s %-26s ${state_color}%-12s\033[0m %-20s %s\n" "$prefix" "$c_name" "$c_state" "$uptime_str" "$ports_display"
+
+    printf "%s %-26s ${state_color}%-12s${Q_COLOR_RESET} %-20s %s\n" \
+        "$prefix" "$c_name" "$c_state" "$uptime_str" "$ports_display"
 }

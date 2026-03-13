@@ -1,38 +1,43 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: quadctl_shim
-# PATH: src/quadctl_shim
-# PROJECT: quadctl
-# VERSION: 11.6.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: The executable shim. Bootstraps environment and routes commands.
-# ==============================================================================
-
+##
+### quadctl_shim - Entry point. Resolves install root, parses global flags, routes commands.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : bash 5.0+, systemd, podman, jq
+## ==============================================================================================
+#
 set -euo pipefail
 
-# 1. RESOLVE INSTALLATION ROOT
-SOURCE="${BASH_SOURCE[0]}"
-while [ -h "$SOURCE" ]; do 
-  DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
-  SOURCE="$(readlink "$SOURCE")"
-  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" 
+# --- 1. RESOLVE INSTALLATION ROOT ---
+# Reason: follow symlinks so the shim can be called from ~/.local/bin/quadctl
+# pointing to the repo without requiring INSTALL_ROOT to be hardcoded.
+_SOURCE="${BASH_SOURCE[0]}"
+while [[ -h "$_SOURCE" ]]; do
+    _DIR="$(cd -P "$(dirname "$_SOURCE")" >/dev/null 2>&1 && pwd)"
+    _SOURCE="$(readlink "$_SOURCE")"
+    [[ "$_SOURCE" != /* ]] && _SOURCE="$_DIR/$_SOURCE"
 done
-SCRIPT_DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+_SCRIPT_DIR="$(cd -P "$(dirname "$_SOURCE")" >/dev/null 2>&1 && pwd)"
+unset _SOURCE _DIR
 
-if [[ -d "${SCRIPT_DIR}/src" ]]; then
-    readonly INSTALL_ROOT="${SCRIPT_DIR}"
-elif [[ -d "${SCRIPT_DIR}/../src" ]]; then
-    readonly INSTALL_ROOT="$(dirname "${SCRIPT_DIR}")"
+if [[ -d "${_SCRIPT_DIR}/src" ]]; then
+    readonly INSTALL_ROOT="${_SCRIPT_DIR}"
+elif [[ -d "${_SCRIPT_DIR}/../src" ]]; then
+    _INSTALL_ROOT="$(dirname "${_SCRIPT_DIR}")"
+    readonly INSTALL_ROOT="${_INSTALL_ROOT}"
+    unset _INSTALL_ROOT
 else
-    log_err "Could not locate 'src' directory from ${SCRIPT_DIR}"
+    # env.bash not loaded yet — use printf directly
+    printf "[ERR]  Could not locate 'src' directory from %s\n" "${_SCRIPT_DIR}" >&2
     exit 1
 fi
+unset _SCRIPT_DIR
 
-# 2. BOOTSTRAP ENVIRONMENT
+# --- 2. BOOTSTRAP ENVIRONMENT ---
 if [[ -f "${INSTALL_ROOT}/src/core/env.bash" ]]; then
     source "${INSTALL_ROOT}/src/core/env.bash"
 else
-    echo "[ERR] Core environment missing" >&2
+    printf "[ERR]  Core environment missing: %s/src/core/env.bash\n" "${INSTALL_ROOT}" >&2
     exit 1
 fi
 
@@ -40,17 +45,46 @@ if [[ -f "${INSTALL_ROOT}/src/core/utils.bash" ]]; then
     source "${INSTALL_ROOT}/src/core/utils.bash"
 fi
 
-# 3. DEPENDENCY CHECK
-source "${INSTALL_ROOT}/src/core/deps.bash"
-if [[ ! "${1:-}" =~ ^(-h|--help|-v|--version|shell|s)$ ]]; then
+# --- 3. GLOBAL FLAG PARSING ---
+# Reason: pre-verb flags follow the git/kubectl convention: quadctl [flags] <verb> [args].
+# Flags are stripped here so the verb is always $1 after this block.
+_Q_POST_MATRIX=false
+_Q_FOLLOW=false
+
+while [[ "${1:-}" == -* ]]; do
+    case "$1" in
+        -q|--quiet)    export Q_VERBOSITY=-1 ; shift ;;
+        -v|--verbose)  export Q_VERBOSITY=1  ; shift ;;
+        --debug)       export Q_VERBOSITY=2  ; shift ;;
+        -m|--matrix)   _Q_POST_MATRIX=true   ; shift ;;
+        -f|--follow)   _Q_FOLLOW=true        ; shift ;;
+        -h|--help)
+            source "${INSTALL_ROOT}/src/ui/help.bash"
+            show_help; exit 0 ;;
+        -V|--version)
+            source "${INSTALL_ROOT}/src/ui/help.bash"
+            show_version; exit 0 ;;
+        --)            shift; break ;;
+        -*)
+            log_err "Unknown flag: $1"
+            printf "       Run 'quadctl --help' for usage.\n" >&2
+            exit 2 ;;
+    esac
+done
+
+# --- 4. COMMAND ROUTING ---
+# Default: matrix view — bare 'quadctl' shows the state of the system.
+cmd="${1:-matrix}"
+shift || true
+
+# Dependency check — skip for informational commands that don't touch systemd/podman.
+if [[ ! "$cmd" =~ ^(-h|--help|-V|--version|help|version|matrix|doctor)$ ]]; then
+    source "${INSTALL_ROOT}/src/core/deps.bash"
     check_runtime_dependencies
 fi
 
-# 4. COMMAND ROUTING
-cmd="${1:-shell}"
-shift || true
-
-parse_filter() {
+# --- 5. FILTER HELPER ---
+_parse_filter() {
     local arg="${1:-}"
     if [[ "$arg" == --type=* ]]; then
         echo "${arg#*=}"
@@ -61,80 +95,187 @@ parse_filter() {
     fi
 }
 
-set +e  # Command routing: failures are handled per-command
+# --- 6. DISPATCH ---
+set +e  # Reason: per-command exit handling. Failures are reported, not propagated.
 
 case "$cmd" in
-    # --- INSPECTION & EDITING ---
-    cat)
-        source "${INSTALL_ROOT}/src/logic/interact.bash"
-        execute_cat "${1:-missing}" "${2:-}"
+
+    # -------------------------------------------------------------------------
+    # MATRIX / STATUS
+    # -------------------------------------------------------------------------
+    matrix|s|qs|"")
+        source "${INSTALL_ROOT}/src/logic/matrix.bash"
+        _filter=$(_parse_filter "${1:-}")
+        execute_matrix_view "$_filter"
         ;;
-    edit)
-        source "${INSTALL_ROOT}/src/logic/interact.bash"
-        execute_edit "${1:-missing}" "${2:-}"
-        ;;
-    tree)
-        source "${INSTALL_ROOT}/src/logic/tree.bash"
-        execute_tree_view
-        ;;
-    audit)
-        source "${INSTALL_ROOT}/src/logic/audit.bash"
-        execute_audit
-        ;;
-    status|s|qs)
-        if [[ -n "${1:-}" ]] && [[ ! "${1:-}" =~ ^(all|a|-a|--all)$ ]]; then
+
+    status)
+        # 'quadctl status <unit>' → systemctl status passthrough.
+        # 'quadctl status' with no arg → matrix (mirrors muscle memory).
+        if [[ -n "${1:-}" ]]; then
             source "${INSTALL_ROOT}/src/logic/control.bash"
             execute_control "status" "$1"
         else
             source "${INSTALL_ROOT}/src/logic/matrix.bash"
-            filter=$(parse_filter "${1:-}")
-            execute_matrix_view "$filter"
+            execute_matrix_view "standard"
         fi
         ;;
+
+    # -------------------------------------------------------------------------
+    # UNIT CONTROL
+    # -------------------------------------------------------------------------
+    start|stop|restart|enable|disable|mask|unmask)
+        source "${INSTALL_ROOT}/src/logic/control.bash"
+        execute_control "$cmd" "${1:-}" "${_Q_FOLLOW}"
+        ;;
+
+    reload)
+        source "${INSTALL_ROOT}/src/logic/control.bash"
+        execute_control "reload" "${1:-}" "false"
+        ;;
+
+    # -------------------------------------------------------------------------
+    # LOGS & DEBUG
+    # -------------------------------------------------------------------------
+    logs|log|l)
+        source "${INSTALL_ROOT}/src/logic/logs.bash"
+        execute_logs "${1:-}" "${2:-50}" "follow"
+        ;;
+
+    debug)
+        source "${INSTALL_ROOT}/src/logic/debug.bash"
+        execute_debug "${1:-}"
+        ;;
+
+    # -------------------------------------------------------------------------
+    # DEPENDENCY QUERIES
+    # -------------------------------------------------------------------------
+    depends-on|depended-by)
+        source "${INSTALL_ROOT}/src/logic/control.bash"
+        execute_control "$cmd" "${1:-}" "false"
+        ;;
+
+    # -------------------------------------------------------------------------
+    # INSPECTION
+    # -------------------------------------------------------------------------
+    cat)
+        source "${INSTALL_ROOT}/src/logic/interact.bash"
+        execute_cat "${1:-missing}" "${2:-}"
+        ;;
+
+    edit)
+        source "${INSTALL_ROOT}/src/logic/interact.bash"
+        execute_edit "${1:-missing}" "${2:-}"
+        ;;
+
+    tree)
+        source "${INSTALL_ROOT}/src/logic/tree.bash"
+        execute_tree_view
+        ;;
+
+    # -------------------------------------------------------------------------
+    # GOVERNANCE
+    # -------------------------------------------------------------------------
+    audit)
+        source "${INSTALL_ROOT}/src/logic/audit.bash"
+        execute_audit
+        ;;
+
     deploy|sync)
         source "${INSTALL_ROOT}/src/logic/deploy.bash"
         execute_deploy "${1:-dry-run}"
         ;;
+
+    dry-run|dry)
+        source "${INSTALL_ROOT}/src/logic/deploy.bash"
+        execute_deploy "dry-run"
+        ;;
+
+    # -------------------------------------------------------------------------
+    # DAEMON RELOAD
+    # -------------------------------------------------------------------------
+    dr|daemon-reload|rd|reload-daemon)
+        _start_ts=$(date +%s%N)
+        log_info "reloading systemd user daemon..."
+        log_verbose "systemctl --user daemon-reload"
+
+        if systemctl --user daemon-reload; then
+            _end_ts=$(date +%s%N)
+            _dur=$(( (_end_ts - _start_ts) / 1000000 ))
+            log_success "daemon reloaded in ${_dur}ms."
+
+            # Post-reload validation: check for source files newer than generated services.
+            # Reason: if deploy ran but daemon was not reloaded, or Quadlet rejected a file,
+            # the generator output in /run/user/.../systemd/generator/ may be stale.
+            _generator_dir="${XDG_RUNTIME_DIR}/systemd/generator"
+            if [[ -d "$_generator_dir" ]]; then
+                log_debug "scanning ${_generator_dir} for stale generator output..."
+                _validation_failed=false
+                while IFS= read -r _svc_file; do
+                    _stem="${_svc_file%.service}"
+                    _stem="${_stem##*/}"
+                    # Strip arch prefix for source lookup
+                    _bare="${_stem#"${Q_ARCH_PREFIX}"}"
+                    for _ext in container volume network image; do
+                        _src="${Q_CONFIG_DIR}/${Q_ARCH_PREFIX}${_bare}.${_ext}"
+                        if [[ -f "$_src" ]]; then
+                            _src_mt=$(stat -c %Y "$_src" 2>/dev/null || echo 0)
+                            _svc_mt=$(stat -c %Y "$_svc_file" 2>/dev/null || echo 0)
+                            if (( _src_mt > _svc_mt )); then
+                                log_warn "${_bare}: source file is newer than generated service — Quadlet may have rejected it."
+                                log_warn "  Check: journalctl --user -xe | grep -i quadlet"
+                                _validation_failed=true
+                            fi
+                            break
+                        fi
+                    done
+                done < <(find "$_generator_dir" -name "${Q_ARCH_PREFIX}*.service" 2>/dev/null)
+
+                if [[ "$_validation_failed" == "false" ]]; then
+                    log_debug "generator output is consistent."
+                fi
+            fi
+        else
+            log_err "daemon-reload failed."
+            exit 1
+        fi
+        ;;
+
+    # -------------------------------------------------------------------------
+    # DIAGNOSTICS
+    # -------------------------------------------------------------------------
     doctor)
         source "${INSTALL_ROOT}/src/logic/doctor.bash"
         execute_doctor
         ;;
-    migrate)
-        source "${INSTALL_ROOT}/src/logic/migrate.bash"
-        execute_prefix_migration "$@"
-        ;;
-    dr|daemon-reload)
-        log_info "Reloading systemd user daemon..."
-        systemctl --user daemon-reload
-        log_success "Daemon reloaded."
-        ;;
-    # Expanded Control Routing
-    start|stop|restart|reload|logs|enable|disable|mask|unmask|depends-on|depended-by)
-        source "${INSTALL_ROOT}/src/logic/control.bash"
-        execute_control "$cmd" "${1:-}"
-        ;;
-    help|--help|-h)
+
+    # -------------------------------------------------------------------------
+    # HELP & VERSION
+    # -------------------------------------------------------------------------
+    help|-h|--help)
         source "${INSTALL_ROOT}/src/ui/help.bash"
         show_help
         ;;
-    version|--version|-v)
+
+    version|-V|--version)
         source "${INSTALL_ROOT}/src/ui/help.bash"
         show_version
         ;;
-    shell|s)
-        source "${INSTALL_ROOT}/src/logic/shell.bash"
-        execute_shell "$@"
-        ;;
+
+    # -------------------------------------------------------------------------
+    # UNKNOWN
+    # -------------------------------------------------------------------------
     *)
-        source "${INSTALL_ROOT}/src/ui/help.bash"
-        log_err "Unknown command: $cmd"
-        show_help
+        log_err "Unknown command: ${cmd}"
+        printf "       Run 'quadctl --help' for usage.\n" >&2
         exit 1
         ;;
 esac
 
-# After a non-interactive command, drop into the REPL if stdout is a tty
-if [[ -t 1 && "$cmd" != "shell" && "$cmd" != "s" && "$cmd" != "help" && "$cmd" != "--help" && "$cmd" != "-h" && "$cmd" != "version" && "$cmd" != "--version" && "$cmd" != "-v" ]]; then
-    source "${INSTALL_ROOT}/src/logic/shell.bash"
-    execute_shell
+# --- 7. POST-COMMAND MATRIX ---
+# Reason: -m/--matrix flag shows system state after any mutating command,
+# replacing the REPL's contextual matrix refresh without requiring interactivity.
+if [[ "$_Q_POST_MATRIX" == true ]]; then
+    source "${INSTALL_ROOT}/src/logic/matrix.bash"
+    execute_matrix_view "standard"
 fi
