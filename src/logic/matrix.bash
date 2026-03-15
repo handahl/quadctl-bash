@@ -279,7 +279,7 @@ execute_matrix_view() {
         echo "$line"
     done
 
-    if [[ "$filter_type" == "all" && ${#lines_aux[@]:-0} -gt 0 ]]; then
+    if [[ "$filter_type" == "all" && ${#lines_aux[@]} -gt 0 ]]; then
         echo ""
         printf "${Q_COLOR_GREY}%-27s %-8s %-10s %-10s %-7s${Q_COLOR_RESET}\n" \
             "  INFRASTRUCTURE" "DRIFT" "STATE" "SUB" "UPTIME"
