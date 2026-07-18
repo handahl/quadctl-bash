@@ -1,0 +1,11 @@
+# Personal archive and abandoned experiments — preserved on disk, not part of the tool
+history_archive/
+quadctl-go/
+
+# Editor / temp
+*.swp
+*.swo
+*.tmp
+*.log
+*.bck
+.DS_Store

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: audit.bash
-# PATH: src/logic/audit.bash
-# PROJECT: quadctl
-# VERSION: 10.6.1
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Static Intent Analysis & Governance Enforcement.
-# ==============================================================================
+##
+### audit.bash - Static intent analysis and governance checks (warn-first posture).
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : (none — pure file analysis)
+## ==============================================================================================
+#
 set -euo pipefail
 
 # ------------------------------------------------------------------------------

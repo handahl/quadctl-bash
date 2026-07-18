@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: systemd.bash
-# PATH: src/core/systemd.bash
-# PROJECT: quadctl
-# DESCRIPTION: Systemd user session queries — state map and generator utilities.
-# ==============================================================================
+##
+### systemd.bash - Systemd user session queries: state map and generator utilities.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : systemd, jq
+## ==============================================================================================
+#
 
 # ------------------------------------------------------------------------------
 # api_systemd_get_state_map
@@ -62,6 +63,49 @@ api_systemd_get_state_map() {
 # ------------------------------------------------------------------------------
 api_systemd_reload() {
     systemctl --user daemon-reload
+}
+
+# ------------------------------------------------------------------------------
+# api_systemd_check_generator_freshness
+# Scans the transient generator directory for prefixed services whose quadlet
+# source file is newer than the generated unit — the signature of a Quadlet
+# rejection (generator ran but refused the file) or a missed daemon-reload.
+# Warns per stale unit. Returns 0 when consistent, 1 when stale output found.
+# Shared by 'quadctl dr' and deploy stage 4 — do not duplicate this scan.
+# ------------------------------------------------------------------------------
+api_systemd_check_generator_freshness() {
+    local generator_dir="${XDG_RUNTIME_DIR}/systemd/generator"
+    [[ -d "$generator_dir" ]] || return 0
+
+    local stale=0
+    local svc_file stem bare src_name src src_mt svc_mt
+    while IFS= read -r svc_file; do
+        stem="${svc_file%.service}"
+        stem="${stem##*/}"
+        bare="${stem#"${Q_ARCH_PREFIX}"}"
+
+        # Inverse of the generator's naming: foo-network.service ← foo.network etc.
+        case "$bare" in
+            *-network) src_name="${bare%-network}.network" ;;
+            *-volume)  src_name="${bare%-volume}.volume"   ;;
+            *-image)   src_name="${bare%-image}.image"     ;;
+            *-pod)     src_name="${bare%-pod}.pod"         ;;
+            *)         src_name="${bare}.container"        ;;
+        esac
+
+        src="${Q_CONFIG_DIR}/${Q_ARCH_PREFIX}${src_name}"
+        [[ -f "$src" ]] || continue
+
+        src_mt=$(stat -c %Y "$src" 2>/dev/null || echo 0)
+        svc_mt=$(stat -c %Y "$svc_file" 2>/dev/null || echo 0)
+        if (( src_mt > svc_mt )); then
+            log_warn "${bare}: source file is newer than generated service — Quadlet may have rejected it."
+            log_warn "  Check: journalctl --user -xe | grep -i quadlet"
+            stale=1
+        fi
+    done < <(find "$generator_dir" -name "${Q_ARCH_PREFIX}*.service" 2>/dev/null)
+
+    return "$stale"
 }
 
 # ------------------------------------------------------------------------------

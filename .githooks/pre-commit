@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+##
+### pre-commit - Lint gate: shellcheck must stay clean; tests must pass.
+## ==============================================================================================
+### TARGET : dev machines (han1) — enable with: git config core.hooksPath .githooks
+### DEPS   : shellcheck (linuxbrew), bats-core (optional)
+## ==============================================================================================
+#
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# --- 1. SHELLCHECK on staged bash sources ---
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM \
+    | grep -E '\.bash$|^src/quadctl_shim$' || true)
+
+if [[ ${#files[@]} -gt 0 ]]; then
+    if command -v shellcheck >/dev/null 2>&1; then
+        shellcheck -S warning -- "${files[@]}"
+    else
+        printf '[WARN] shellcheck not installed — lint gate skipped.\n' >&2
+    fi
+fi
+
+# --- 2. TESTS (fast, hermetic — skip silently if bats absent) ---
+if command -v bats >/dev/null 2>&1 && [[ -d test ]]; then
+    bats test/ >/dev/null || {
+        printf '[ERR]  test suite failed — run: bats test/\n' >&2
+        exit 1
+    }
+fi

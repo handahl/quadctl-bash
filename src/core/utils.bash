@@ -1,18 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-## FILE: quadctl/src/core/utils.bash |   VERSION: 11.1.0   |   DATE: 2026-03-04
-# ==============================================================================
-
-# Portable search: rg (if available) vs grep -E
-search_pattern() {
-    local pattern="$1"
-    local input="${2:-$(cat)}"
-    if command -v rg &>/dev/null; then
-        echo "$input" | rg -iq "$pattern" # -i for case insensitive, -q for exit code
-    else
-        echo "$input" | grep -Eiq "$pattern"
-    fi
-}
+##
+### utils.bash - Shared helpers: search, specifier expansion, generator discovery, git.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : git (optional), rg (optional)
+## ==============================================================================================
+#
 
 # Systemd Specifier Expander
 expand_specifiers() {
@@ -79,8 +72,9 @@ auto_git_commit() {
 
     log_info "Autocommitting intent changes..."
     git add "$Q_SRC_DIR"
-    
-    local msg="quadctl deploy ($mode): $(date '+%Y-%m-%d %H:%M:%S')"
+
+    local msg
+    msg="quadctl deploy ($mode): $(date '+%Y-%m-%d %H:%M:%S')"
     if git commit -m "$msg"; then
         log_success "Changes committed to history."
     else

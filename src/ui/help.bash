@@ -7,7 +7,13 @@
 ## ==============================================================================================
 
 show_version() {
-    printf "quadctl %s\n" "${Q_VERSION:-unknown}"
+    # Reason: git is the version of record (ai.restraints.md § Version of Record).
+    # --always keeps output useful on an untagged clone; --dirty flags local edits.
+    local v=""
+    if command -v git >/dev/null 2>&1; then
+        v=$(git -C "${INSTALL_ROOT:-.}" describe --tags --always --dirty 2>/dev/null || true)
+    fi
+    printf "quadctl %s\n" "${v:-unversioned}"
 }
 
 show_help() {

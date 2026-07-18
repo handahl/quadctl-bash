@@ -195,6 +195,7 @@ case "$cmd" in
     # DAEMON RELOAD
     # -------------------------------------------------------------------------
     dr|daemon-reload|rd|reload-daemon)
+        source "${INSTALL_ROOT}/src/core/systemd.bash"
         _start_ts=$(date +%s%N)
         log_info "reloading systemd user daemon..."
         log_verbose "systemctl --user daemon-reload"
@@ -204,36 +205,10 @@ case "$cmd" in
             _dur=$(( (_end_ts - _start_ts) / 1000000 ))
             log_success "daemon reloaded in ${_dur}ms."
 
-            # Post-reload validation: check for source files newer than generated services.
-            # Reason: if deploy ran but daemon was not reloaded, or Quadlet rejected a file,
-            # the generator output in /run/user/.../systemd/generator/ may be stale.
-            _generator_dir="${XDG_RUNTIME_DIR}/systemd/generator"
-            if [[ -d "$_generator_dir" ]]; then
-                log_debug "scanning ${_generator_dir} for stale generator output..."
-                _validation_failed=false
-                while IFS= read -r _svc_file; do
-                    _stem="${_svc_file%.service}"
-                    _stem="${_stem##*/}"
-                    # Strip arch prefix for source lookup
-                    _bare="${_stem#"${Q_ARCH_PREFIX}"}"
-                    for _ext in container volume network image; do
-                        _src="${Q_CONFIG_DIR}/${Q_ARCH_PREFIX}${_bare}.${_ext}"
-                        if [[ -f "$_src" ]]; then
-                            _src_mt=$(stat -c %Y "$_src" 2>/dev/null || echo 0)
-                            _svc_mt=$(stat -c %Y "$_svc_file" 2>/dev/null || echo 0)
-                            if (( _src_mt > _svc_mt )); then
-                                log_warn "${_bare}: source file is newer than generated service — Quadlet may have rejected it."
-                                log_warn "  Check: journalctl --user -xe | grep -i quadlet"
-                                _validation_failed=true
-                            fi
-                            break
-                        fi
-                    done
-                done < <(find "$_generator_dir" -name "${Q_ARCH_PREFIX}*.service" 2>/dev/null)
-
-                if [[ "$_validation_failed" == "false" ]]; then
-                    log_debug "generator output is consistent."
-                fi
+            # Post-reload validation: stale generator output means Quadlet rejected
+            # a file or deploy ran without this reload. Shared scan with deploy stage 4.
+            if api_systemd_check_generator_freshness; then
+                log_debug "generator output is consistent."
             fi
         else
             log_err "daemon-reload failed."

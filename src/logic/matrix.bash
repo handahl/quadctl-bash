@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: matrix.bash
-# PATH: src/logic/matrix.bash
-# PROJECT: quadctl
-# DESCRIPTION: High-density reconciliation matrix. Union of disk intent and
-#              systemd runtime state, keyed on canonical service names.
-# ==============================================================================
+##
+### matrix.bash - High-density reconciliation matrix. Union of disk intent and
+###               systemd runtime state, keyed on canonical service names.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : systemd, jq, podman.socket
+## ==============================================================================================
+#
 
 source "${INSTALL_ROOT}/src/core/podman.bash"
 source "${INSTALL_ROOT}/src/core/systemd.bash"
@@ -301,8 +302,9 @@ execute_matrix_view() {
                         p_health="$api_status" ;;
                     *)
                         # No health state from API — read deployed file to distinguish
-                        # n/a (no HealthCmd) from inactive (HealthCmd commented out)
-                        local deployed_file="$Q_CONFIG_DIR/${clean_name}.container"
+                        # n/a (no HealthCmd) from inactive (HealthCmd commented out).
+                        # Deployed files carry the arch prefix; use the full unit stem.
+                        local deployed_file="$Q_CONFIG_DIR/${unit%.service}.container"
                         if [[ -f "$deployed_file" ]]; then
                             if grep -qE '^[[:space:]]*#[[:space:]]*HealthCmd=' "$deployed_file" 2>/dev/null; then
                                 p_health="inactive"
@@ -324,9 +326,10 @@ execute_matrix_view() {
                     p_image="latest"
                 fi
 
-                # Routing: read Label=org.hanlab.routing=<hostname> from quadlet file.
+                # Routing: read Label=org.quadctl.routing=<url> from the quadlet file.
                 # Labels set via Label= in the quadlet file are present in the Podman API.
-                rule=$(echo "$labels" | jq -r '."org.hanlab.routing" // empty' 2>/dev/null | head -n1)
+                # org.hanlab.routing is the legacy key — kept as fallback during migration.
+                rule=$(echo "$labels" | jq -r '."org.quadctl.routing" // ."org.hanlab.routing" // empty' 2>/dev/null | head -n1)
 
                 if [[ -n "$rule" ]]; then
                     p_ports="● ${rule}"

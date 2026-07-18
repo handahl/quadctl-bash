@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: podman.bash
-# PATH: src/core/podman.bash
-# PROJECT: quadctl
-# DESCRIPTION: Rootless Podman socket API — version negotiation and container map.
-# ==============================================================================
+##
+### podman.bash - Rootless Podman socket API: version negotiation and container map.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : curl, jq, podman.socket
+## ==============================================================================================
+#
 
 # Global version cache — populated once per process
 _Q_API_VER=""

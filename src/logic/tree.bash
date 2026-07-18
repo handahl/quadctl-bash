@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: tree.bash
-# PATH: src/logic/tree.bash
-# PROJECT: quadctl
-# DESCRIPTION: Hierarchical view of Pods and their constituent containers.
-# ==============================================================================
+##
+### tree.bash - Hierarchical view of Pods and their constituent containers.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : podman, jq
+## ==============================================================================================
+#
 
 execute_tree_view() {
     if ! command -v jq &>/dev/null; then

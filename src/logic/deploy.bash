@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: deploy.bash
-# PATH: src/logic/deploy.bash
-# PROJECT: quadctl
-# VERSION: 11.8.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Synchronizes Intent (Source) to Runtime (Target) with Strict Audit.
-# ==============================================================================
+##
+### deploy.bash - Synchronizes Intent (Source) to Runtime (Target) with audit gate.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : rsync, systemd, git (optional)
+## ==============================================================================================
+#
 
 set -euo pipefail
+
+source "${INSTALL_ROOT}/src/core/systemd.bash"
 
 # ------------------------------------------------------------------------------
 # audit_directory
@@ -131,17 +132,31 @@ execute_deploy() {
         fi
     fi
 
-    # --- STAGE 2: STAGING (RSYNC FIRST) ---
-    local rsync_opts="-av --delete --exclude=.git"
-    
-    if [[ "$now_flag" == "false" && "$force_flag" == "false" ]]; then
-        rsync_opts+=" --dry-run"
+    # --- STAGE 2: SYNC ---
+    # Reason: options built as an array — no word-splitting (skill rule 13).
+    local rsync_cmd=(rsync -av --delete --exclude=.git)
+
+    local apply="false"
+    [[ "$now_flag" == "true" || "$force_flag" == "true" ]] && apply="true"
+
+    if [[ "$apply" == "false" ]]; then
+        rsync_cmd+=(--dry-run)
         log_info "no actual changes will be made, use 'deploy now' to apply changes."
     else
+        # Guard: an empty or unmounted source combined with --delete would
+        # wipe the runtime dir and take the lab down. Refuse, do not guess.
+        if ! find "$Q_SRC_DIR" -maxdepth 2 -type f \
+            \( -name "*.container" -o -name "*.pod" -o -name "*.image" \
+               -o -name "*.network" -o -name "*.volume" \) -print -quit 2>/dev/null \
+            | grep -q .; then
+            log_err "intent directory contains no quadlet files: $Q_SRC_DIR"
+            log_err "  refusing to sync with --delete (would empty $Q_CONFIG_DIR)."
+            return 1
+        fi
         log_info "deploying intent files..."
     fi
 
-    rsync $rsync_opts "$Q_SRC_DIR/" "$Q_CONFIG_DIR/"
+    "${rsync_cmd[@]}" "$Q_SRC_DIR/" "$Q_CONFIG_DIR/"
 
     # --- STAGE 3: GENERATOR VALIDATION ---
     log_info "validating intent files..."
@@ -152,61 +167,33 @@ execute_deploy() {
         local output
         output=$("$generator" --user --dryrun 2>&1 || true)
 
-        # Use your portable search logic here
+        # Reason: the matching lines must be *shown*, not just detected —
+        # "generator reports issues" with no issues listed is useless to the operator.
         if [[ -z "$output" ]]; then
-            log_success "quadlet generator runs succesfull. all units validated."
-        elif echo "$output" | search_pattern "No files parsed" >/dev/null; then
-            log_err "quadlet generator run fails. no new units validated."
+            log_success "quadlet generator validated all units."
+        elif grep -qi "No files parsed" <<< "$output"; then
+            log_err "quadlet generator could not parse the unit files:"
+            grep -iE "warning|error|no files" <<< "$output" | sed 's/^/   /' >&2
             [[ "$force_flag" == "false" ]] && return 1
-        elif echo "$output" | search_pattern "Warning|error|converting" >/dev/null; then
-            # Keep your original log message
-            log_warn "quadlet generator reports issues."
-            echo "$output" | search_pattern "Warning|error|converting"
+        elif grep -qiE "warning|error|converting" <<< "$output"; then
+            log_warn "quadlet generator reports issues:"
+            grep -iE "warning|error|converting" <<< "$output" | sed 's/^/   /' >&2
         fi
     fi
 
-# --- STAGE 4: RELOAD ---
-    if [[ "$now_flag" == "true" || "$force_flag" == "true" ]]; then
-        check_git_status 
-        
+    # --- STAGE 4: RELOAD + POST-RELOAD VALIDATION ---
+    if [[ "$apply" == "true" ]]; then
+        check_git_status
+
         systemctl --user daemon-reload
-        
-        local validation_failed="false"
-        local deployed_files
-        deployed_files=$(rsync $rsync_opts --itemize-changes "$Q_SRC_DIR/" "$Q_CONFIG_DIR/" 2>/dev/null | grep -E "^[<>]" | grep -E "\.(container|pod|network|volume)$" | awk '{print $2}' || true)
-        
-        # Identify the correct runtime directory for systemd generators
-        local run_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-        
-        if [[ -n "$deployed_files" ]]; then
-            while IFS= read -r file; do
-                if [[ -n "$file" ]]; then
-                    local filename=$(basename "$file")
-                    local service_filename="${filename%.*}.service"
-                    
-                    # THE FIX: Generators output to the transient run directory, NOT the config directory
-                    local service_path="$run_dir/systemd/generator/$service_filename"
-                    
-                    if [[ ! -f "$service_path" ]]; then
-                        log_err "service file not generated for $filename. Check 'journalctl --user -xe' for Quadlet generator output."
-                        validation_failed="true"
-                    else
-                        local container_mtime=$(stat -c %Y "$Q_CONFIG_DIR/$filename" 2>/dev/null || stat -f %m "$Q_CONFIG_DIR/$filename" 2>/dev/null)
-                        local service_mtime=$(stat -c %Y "$service_path" 2>/dev/null || stat -f %m "$service_path" 2>/dev/null)
-                        
-                        if [[ -n "$container_mtime" && -n "$service_mtime" && "$container_mtime" -gt "$service_mtime" ]]; then
-                            log_err "[GEN_FAIL] Generator ran but rejected $filename (container file is newer than service file)."
-                            validation_failed="true"
-                        fi
-                    fi
-                fi
-            done <<< "$deployed_files"
-        fi
-        
-        if [[ "$validation_failed" == "true" ]]; then
-            return 1
-        else
+
+        # Reason: after reload, any quadlet source newer than its generated unit
+        # means the generator rejected it. Shared scan with 'quadctl dr'.
+        if api_systemd_check_generator_freshness; then
             log_success "Deployment applied."
+        else
+            log_err "deployment applied, but generator output is stale for the units above."
+            return 1
         fi
     fi
 }

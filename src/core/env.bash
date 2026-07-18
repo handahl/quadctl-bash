@@ -8,23 +8,20 @@
 #
 set -euo pipefail
 
-# --- 1. VERSIONING & IDENTITY ---
-export Q_VERSION="0.13.0"
-
-# --- 2. XDG BASE DIRECTORIES ---
+# --- 1. XDG BASE DIRECTORIES ---
 # Reason: use ':=' to set-if-unset without overwriting a caller-provided value.
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 : "${XDG_DATA_HOME:=$HOME/.local/share}"
 : "${XDG_STATE_HOME:=$HOME/.local/state}"
 : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
 
-# --- 3. VERBOSITY ---
+# --- 2. VERBOSITY ---
 # Reason: env var allows caller to pre-set verbosity (e.g. in a script);
 # the shim's flag parsing will override via export before any module sources this.
 # -1 = quiet (errors only), 0 = default, 1 = verbose, 2 = debug
 export Q_VERBOSITY="${Q_VERBOSITY:-0}"
 
-# --- 4. COLOR / TTY DETECTION ---
+# --- 3. COLOR / TTY DETECTION ---
 # Reason: check stderr (fd 2) because all log output goes to stderr.
 # Checking stdout (fd 1) breaks color when the user pipes stdout to a file.
 if [[ -t 2 && -z "${NO_COLOR:-}" ]]; then
@@ -47,7 +44,7 @@ else
     export Q_COLOR_RESET=""
 fi
 
-# --- 5. LOGGING PRIMITIVES ---
+# --- 4. LOGGING PRIMITIVES ---
 # All output goes to stderr. stdout is reserved for data (matrix, cat, etc).
 #
 # Default output (Q_VERBOSITY >= 0):
@@ -89,9 +86,9 @@ log_debug() {
         printf "%s[debug]%s %s\n" "${Q_COLOR_GREY}" "${Q_COLOR_RESET}" "$1" >&2 || true
 }
 
-# --- 6. PREFIX GOVERNANCE ---
+# --- 5. PREFIX GOVERNANCE ---
 # Reason: env var is the right mechanism — it varies per node (han1 vs han3).
-# Config file is loaded next (step 8) and can supply a default without shell profile changes.
+# Config file is loaded next (step 7) and can supply a default without shell profile changes.
 if [[ -z "${QUADCTL_PREFIX:-}" ]]; then
     export Q_ARCH_PREFIX="homelab-"
     export Q_ENV_WARNING="true"
@@ -100,14 +97,14 @@ else
     export Q_ENV_WARNING="false"
 fi
 
-# --- 7. PATH DEFINITIONS ---
+# --- 6. PATH DEFINITIONS ---
 export Q_CONFIG_DIR="${XDG_CONFIG_HOME}/containers/systemd"
 export Q_USER_UNIT_DIR="${XDG_CONFIG_HOME}/systemd/user"
 export Q_SRC_DIR="${QUADCTL_SRC:-$HOME/src/containers/intent}"
 export Q_DATA_DIR="${XDG_DATA_HOME}/quadctl"
 export Q_PODMAN_SOCK="${XDG_RUNTIME_DIR}/podman/podman.sock"
 
-# --- 8. CONFIG FILE ---
+# --- 7. CONFIG FILE ---
 # Loaded after defaults so config can supply values only if env vars are unset.
 # Precedence: flags (shim) > env vars > config file > defaults above.
 _load_config() {
@@ -142,7 +139,7 @@ _load_config() {
 _load_config
 unset -f _load_config
 
-# --- 9. PLATFORM DETECTION ---
+# --- 8. PLATFORM DETECTION ---
 _detect_platform() {
     local os_id="" os_like=""
     if [[ -r /etc/os-release ]]; then
@@ -177,7 +174,7 @@ case "$Q_PLATFORM" in
     *)                                export Q_NODE_TIER="unknown"   ;;
 esac
 
-# --- 10. INITIALIZATION WARNING ---
+# --- 9. INITIALIZATION WARNING ---
 # Only warn when interactive and warning has not been suppressed.
 if [[ "$Q_ENV_WARNING" == "true" && -t 2 && "${Q_SILENT_ENV:-0}" == "0" ]]; then
     log_warn "QUADCTL_PREFIX not set. Defaulting to '${Q_ARCH_PREFIX}'."

@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: debug.bash
-# PATH: src/logic/debug.bash
-# PROJECT: quadctl
-# VERSION: 10.5.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: The "Debug Cycle" state machine.
-# ==============================================================================
+##
+### debug.bash - The "Debug Cycle": stop → disable restart → start → tail.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : systemd, journalctl
+## ==============================================================================================
+#
 
 source "${INSTALL_ROOT}/src/logic/logs.bash"
 
@@ -22,7 +21,8 @@ execute_debug() {
         return 1
     fi
 
-    local start_ts=$(date +%s%N)
+    local start_ts
+    start_ts=$(date +%s%N)
 
     log_warn "entering DEBUG MODE for ${unit}..."
     
@@ -49,8 +49,9 @@ execute_debug() {
     # 4. Start Cleanly
     log_info "starting unit manually..."
     if systemctl --user start "$unit"; then
-        local end_ts=$(date +%s%N)
-        local dur=$(( (end_ts - start_ts) / 1000000 ))
+        local end_ts dur
+        end_ts=$(date +%s%N)
+        dur=$(( (end_ts - start_ts) / 1000000 ))
         log_success "unit started in ${dur}ms."
     else
         log_err "unit failed to start. tailing logs."

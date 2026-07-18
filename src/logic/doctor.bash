@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: doctor.bash
-# PATH: src/logic/doctor.bash
-# PROJECT: quadctl
-# VERSION: 11.8.0
-# DATE: 2026-02-05
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: System health diagnostics with prerequisite chain validation.
-# ==============================================================================
+##
+### doctor.bash - System health diagnostics with prerequisite chain validation.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : systemd
+## ==============================================================================================
+#
 
 set -euo pipefail
 

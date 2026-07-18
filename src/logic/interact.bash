@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: interact.bash
-# PATH: src/logic/interact.bash
-# PROJECT: quadctl
-# VERSION: 1.0.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Interactive commands for viewing and editing Intent vs Runtime.
-# ==============================================================================
+##
+### interact.bash - Interactive commands for viewing and editing Intent vs Runtime.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : systemd, $EDITOR
+## ==============================================================================================
+#
 
 # ------------------------------------------------------------------------------
 # execute_cat

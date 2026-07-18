@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: migrate.bash
-# PATH: src/logic/migrate.bash
-# PROJECT: quadctl
-# VERSION: 1.0.0
-# AUTHOR: SAC-CP (v2.1)
-# DESCRIPTION: Heuristic detection and renaming of Quadlet units to match current prefix.
-# ==============================================================================
+##
+### migrate.bash - Heuristic detection and renaming of Quadlet units to match current prefix.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : (none)
+## ==============================================================================================
+#
 
 execute_prefix_migration() {
     local target_dir="$Q_CONFIG_DIR"

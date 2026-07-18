@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# FILE: deps.bash
-# PATH: src/core/deps.bash
-# PROJECT: quadctl
-# VERSION: 11.1.0
-# DESCRIPTION: Runtime dependency verification with tiered Semantic Version floors.
+##
+### deps.bash - Runtime dependency verification with tiered version floors.
+## ==============================================================================================
+### TARGET : Aurora / ucore
+### DEPS   : systemctl, podman, loginctl
+## ==============================================================================================
 #
 # Two-tier model per ai.restraints.md:
 #   preferred: full feature set (Fedora Atomic / han3, han1)
 #   compat:    minimum viable (Rocky 9 / han3-vps) — warn, do not fail
-# ==============================================================================
 
 # ------------------------------------------------------------------------------
 # vercomp
@@ -19,7 +18,9 @@
 vercomp() {
     if [[ "$1" == "$2" ]]; then return 0; fi
     local IFS=.
-    local i ver1=($1) ver2=($2)
+    local i ver1 ver2
+    read -ra ver1 <<< "$1"
+    read -ra ver2 <<< "$2"
     for ((i=${#ver1[@]}; i<${#ver2[@]}; i++)); do ver1[i]=0; done
     for ((i=0; i<${#ver1[@]}; i++)); do
         if [[ -z ${ver2[i]} ]]; then ver2[i]=0; fi
@@ -139,5 +140,5 @@ check_runtime_dependencies() {
     check_version_tiered "Podman" "$pod_v" "4.4.0" "5.0.0"
     pod_rc=$?
     [[ $pod_rc -eq 2 ]] && exit 1
-    return 0   # ← add this
+    return 0
 }

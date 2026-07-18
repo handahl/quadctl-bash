@@ -1,0 +1,349 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hanlab.constraints.json",
+  "meta": {
+    "version": "2.1.0",
+    "date": "2026-03-04",
+    "owner": "handahl",
+    "standard": "han-dynamic"
+  },
+
+  "topology": {
+    "nodes": {
+      "han0": {
+        "role": "router",
+        "hardware": "Asus RT-AX86U",
+        "os": "Asus WRT-Merlin",
+        "notes": "Entware for additional packages. Options constrained by WRT-Merlin. Beszel agent via Entware. WireGuard + ProtonVPN; mwan3 multi-tunnel failover. Outside quadctl scope."
+      },
+      "han1": {
+        "role": "management node / laptop",
+        "os": "xps 13 9320, i7 12600p, intel iris xe, 16G ram, 1T nvme",
+        "os": "Universal Blue Aurora (image-based, rpm-ostree)",
+        "os_model": "Automatic silent OS image updates. User layer: brew (CLI tools), Flatpaks (GUI apps), Devcontainers (development workloads). No Ignition. No Ansible.",
+        "host_provisioning": "manual-ad-hoc — no provisioning toolchain on han1 currently. Host-level state changes (semanage, directories) are performed manually.",
+        "runtime": "rootless Podman via systemd Quadlet, containers prefixed with han1",
+        "notes": "YubiKey GPG SSH subkeys. Primary operator workstation. Devcontainers for dev workflows."
+      },
+      "han3": {
+        "role": "primary service node: the original hanlab",
+        "hardware": "Lenovo M720s SFF, i5 8500, 24G ram, 1T nvme (os, most services), 470G ssd (immich), 3.6T hdd (garage s3+mix)",
+        "os": "Universal Blue ucore (bootc / FCOS-derived)",
+        "os_model": "Image-based, bootc. Ignition/Butane for provisioning where applicable.",
+        "host_provisioning": "Butane/Ignition for host-level state (users, directories, semanage). No Ansible currently.",
+        "runtime": "rootless Podman via systemd Quadlet",
+        "notes": "Intel Quick Sync available. Beszel hub. Primary service workload node."
+      },
+      "han3-vps": {
+        "role": "edge / VPS",
+        "os": "Rocky 9 (lightnode) or Fedora (Hetzner)",
+        "host_provisioning": "manual-ad-hoc currently. No Ansible. Shell scripts for prerequisites.",
+        "runtime": "rootless Podman via systemd Quadlet",
+        "provider_candidates": ["lightnode (Frankfurt or Saigon)", "Hetzner (Nürnberg or Helsinki)"],
+        "status": "TBD — provider and location not yet finalized",
+        "notes": "quadctl must run here. Prerequisite deltas vs. han3 expected to be version numbers only, no significant code changes required."
+      }
+    },
+    "naming_convention": {
+      "nodes": "han3-nbg, han3-sgn for physical/VM nodes hostnames",
+      "containers": "hanlab- prefix for container names at han3, with added iata name for nodes",
+      "networks": "hanlab- prefix for networks",
+      "quadlet_intent_path": "/home/handahl/src/containers/intent",
+      "quadlet_runtime_path": "/home/handahl/.config/containers/systemd",
+      "architecture_prefix": "hanlab-"
+    }
+  },
+
+  "os_constraints": {
+    "immutability": {
+      "han3_ucore": "bootc image-based. Host mutations via Butane/Ignition at provisioning. No runtime dnf install, no host filesystem edits outside provisioning layer.",
+      "han1_aurora": "rpm-ostree image-based. OS updates are automatic and image-level. User state via brew and Flatpaks. Host-level changes (semanage, etc.) are currently manual.",
+      "han3_vps_rocky9": "Traditional mutable OS. More permissive by nature; quadctl must not rely on this and must handle prerequisites gracefully.",
+      "prohibited_everywhere": [
+        "dnf install during service operation",
+        "rpm-ostree overlay for runtime service dependencies",
+        "Direct /etc edits as part of container service lifecycle"
+      ]
+    },
+    "custom_os_builds": {
+      "status": "planned",
+      "mechanism": "bootc Containerfile builds via Forgejo CI",
+      "targets": ["ucore custom", "aurora-dx custom"]
+    }
+  },
+
+  "runtime_constraints": {
+    "container_runtime": "rootless Podman exclusively",
+    "unit_management": "systemd Quadlet files: .container, .volume, .network, .image",
+    "pod_files": {
+      "policy": "avoid",
+      "rationale": "Pods add orchestration complexity that Quadlet per-container network and dependency model handles more cleanly at single-operator homelab scale."
+    },
+    "prohibited": [
+      "Docker",
+      "rootful Podman for service containers",
+      "docker-compose / podman-compose",
+      "privileged containers",
+      "DinD (Docker-in-Docker) / PinP (Podman-in-Podman)"
+    ],
+    "critical_distinction": {
+      "rootless_podman": "User unit via systemctl --user. Quadlet in ~/.config/containers/systemd/. Podman runs under operator UID with subuid/subgid namespace mapping.",
+      "rootful_with_privilege_drop": "System unit in /etc/containers/systemd/ with User= in [Service]. Podman runs as root, forks, drops privileges. This is NOT rootless Podman. These are fundamentally different isolation models and must not be conflated."
+    },
+    "linger": "loginctl enable-linger <user> — required for user units to survive without a login session",
+    "podman_socket_path": "han3:/run/user/1001/podman/podman.sock"
+  },
+
+  "selinux": {
+    "enforcement": "enforcing — never disabled, never permissive in production",
+    "posture": "first-class constraint, not an obstacle",
+    "hierarchy": [
+      {
+        "tier": 1,
+        "tool": "semanage fcontext + restorecon",
+        "use_case": "Persistent data directories dedicated to a container or service. Applied once at provisioning time, not at container start.",
+        "example": "semanage fcontext -a -t container_file_t '%h/.local/share/hanlab/forge(/.*)?'; restorecon -Rv <path>"
+      },
+      {
+        "tier": 2,
+        "tool": "udica",
+        "use_case": "Non-standard access patterns requiring a custom policy module: sockets (e.g. Podman socket passthrough to runner), restricted host paths, cross-context access. Flow: podman inspect → udica → sudo semodule -i → SecurityLabelType= in Quadlet.",
+        "note": "semodule requires root — generate and load policy at provisioning time, not at container start."
+      },
+      {
+        "tier": 3,
+        "tool": "audit2allow",
+        "use_case": "Diagnostic only. Read denials, understand them, write a proper policy. Never pipe audit2allow output directly to semodule in production."
+      }
+    ],
+    "volume_flags": {
+      "z_Z_in_committed_quadlets": "discouraged — quadctl audit might get a feature to warn on z/Z presence in committed intent files",
+      "z_Z_during_development": "permitted with awareness — useful shortcut during exploration",
+      "rationale": "z/Z are chcon shortcuts reverted by restorecon. They mask labeling errors and are not a policy. The better path is tier 1 or tier 2.",
+      "pragmatic_position": "Operator is sole decision-maker. Use z/Z when the situation warrants. The constraint exists to remind of the better path and to surface it in audit output, not to block."
+    },
+    "state_directory_note": "StateDirectory= in user units resolves to ~/.local/state/<n> which carries user_home_t — does NOT inherit container_file_t. semanage fcontext must be applied explicitly if that path is volume-mounted into a container. StateDirectory= is appropriate for runtime state the container does not mount (pid files, runner registration files, etc.)."
+  },
+
+  "secret_management": {
+    "hierarchy": [
+      {
+        "tier": 1,
+        "mechanism": "systemd-creds (LoadCredentialEncrypted=)",
+        "use_case": "TPM2-bound at-rest encryption. Preferred for all secrets where the application supports file-based injection.",
+        "quadlet_bridge": "Volume=%d:/run/secrets:ro — maps CREDENTIALS_DIRECTORY into container as read-only tmpfs",
+        "caveat": "[Speculation] %d specifier expansion inside Quadlet [Container] Volume= requires verification. Quadlet generator may or may not expand it. Test before production use.",
+        "container_reads": "/run/secrets/<n>"
+      },
+      {
+        "tier": 2,
+        "mechanism": "Secret=name,type=mount",
+        "use_case": "Podman-managed secret store, file-based injection. No TPM2 binding. Use when systemd-creds bridge is unverified or the application reads from a file path.",
+        "container_reads": "/run/secrets/<n>"
+      },
+      {
+        "tier": 3,
+        "mechanism": "Secret=name,type=env,target=VAR",
+        "use_case": "When the application has no _FILE convention and cannot read from a path (e.g. Forgejo's FORGEJO__section__KEY pattern). Acknowledge trade-off: secret visible in /proc/<pid>/environ.",
+        "migration_path": "Build a shim layer FROM upstream image that reads /run/secrets/* and exports env vars — moves secret to tier 2. Deferred until hardening pipeline is established.",
+        "pragmatic_position": "Use type=env when the file-based workaround is more trouble than the security trade-off is worth at current threat model. The constraint exists as a reminder of the better path, not a hard block."
+      },
+      {
+        "tier": 4,
+        "mechanism": ".env files",
+        "use_case": "PROHIBITED for sensitive values. Unencrypted plaintext on disk. Permitted only for non-sensitive configuration: feature flags, tuning parameters."
+      }
+    ],
+    "env_in_quadlet": {
+      "non_sensitive": "Environment= directives in [Container] — declarative, git-trackable, correct",
+      "sensitive": "Never in Environment= in committed files. Use secret hierarchy above."
+    }
+  },
+
+  "volume_management": {
+    "philosophy": "Prefer .volume Quadlet files over inline Volume= for persistent data. Direct Volume= bind mounts are correct for config files that must exist at unit evaluation time.",
+    "modes": {
+      "mode_a_podman_managed": {
+        "description": "Podman-managed named volume. Opaque storage path under Podman's storage root (~/.local/share/containers/storage/volumes/).",
+        "selinux": "Auto-labeled container_file_t by Podman. No semanage required.",
+        "backup": "Target Podman volume storage path in Restic/Garage backup config.",
+        "use_case": "Opaque runtime data: database files, LFS blobs, Garage object storage"
+      },
+      "mode_b_bind_wrapped": {
+        "description": "Named .volume file wrapping a bind mount to an explicit host path via Options=bind,src=<path>.",
+        "selinux": "semanage fcontext required on host path before first start.",
+        "use_case": "Data where explicit host path matters for backup targeting or external tooling"
+      },
+      "direct_bind_in_container": {
+        "description": "Inline Volume= in .container file pointing to host path.",
+        "use_case": "Config files that must exist before container starts; paths tracked in git and managed centrally",
+        "selinux": "semanage fcontext required on host path"
+      }
+    },
+    "z_Z_flags": "see selinux.volume_flags"
+  },
+
+  "image_management": {
+    "philosophy": "Use .image Quadlet files for all images in non-trivial deployments. Inline Image= without a corresponding .image file is acceptable during ad-hoc development only.",
+    "source_hierarchy": [
+      "forge.handahl.org — built/hardened images",
+      "codeberg.org — Forgejo itself",
+      "quay.io — RHEL/Fedora ecosystem images",
+      "docker.io — last resort; prefer verified publisher images"
+    ],
+    "auto_update": {
+      "upstream_images": "AutoUpdate=registry — monitors digest changes on upstream tag",
+      "local_registry_images": "AutoUpdate=registry — meaningful once image is pushed to forge.handahl.org",
+      "local_pre_registry": "PodmanArgs=--pull=never — for locally built images not yet in a registry",
+      "contradiction": "--pull=never and AutoUpdate=registry must not be combined"
+    },
+    "manifest": {
+      "file": "images.yaml",
+      "description": "Single source of truth for all image references, update policies, and build sources",
+      "quadctl_command": "quadctl image sync — generates .image files from manifest",
+      "fields": ["ref", "auto_update", "pin_digest", "build_source"],
+      "status": "planned — not yet implemented in quadctl"
+    },
+    "hardening_pipeline": {
+      "pattern": "FROM upstream → Containerfile hardening layer → push to forge.handahl.org",
+      "build_trigger": "Forgejo Actions on commit",
+      "toolchain_containers": ["rust-builder (rg, fd, modern safe CLI tools)", "go-builder"],
+      "os_image_builds": "planned: bootc Containerfile for ucore and aurora-dx custom builds",
+      "status": "planned — Forgejo runner not yet deployed"
+    }
+  },
+
+  "network_constraints": {
+    "philosophy": "Explicit network attachment only. No container on default bridge unless intentional and documented.",
+    "defined_networks": {
+      "hanlab-proxy.network": "Traefik-facing. Only services requiring HTTP/HTTPS ingress attach here.",
+      "hanlab-backend.network": "Internal service-to-service communication. No external exposure.",
+      "runner-isolated.network": "Forgejo runner. Must have no route to hanlab-backend.network — blast radius containment."
+    },
+    "runner_network_isolation": "Runner container may not reach hanlab-backend.network. Jobs run as sibling containers on runner-isolated.network only."
+  },
+
+  "hardening_defaults": {
+    "apply_to_all_containers": {
+      "DropCapability": "all",
+      "AddCapability": "only what upstream OCI inspect + documentation explicitly requires — not guesswork",
+      "NoNewPrivileges": true,
+      "ReadOnlyTmpfs": true,
+      "PidsLimit": 200,
+      "SecurityLabelDisable": false
+    },
+    "capability_source_of_truth": "podman image inspect Config.Capabilities + upstream documentation",
+    "seccomp": "Default Podman seccomp profile unless upstream documents specific syscall requirements"
+  },
+
+  "quadctl": {
+    "repository": "forge.handahl.org/han/quadctl",
+    "implementation_language": "Bash (current v1). Rust or Go target for v2.",
+    "paths": {
+      "intent": "/home/handahl/src/containers/intent",
+      "runtime": "/home/handahl/.config/containers/systemd",
+      "podman_socket": "/run/user/1001/podman/podman.sock",
+      "architecture_prefix": "hanlab-"
+    },
+    "scope": "Container workload intent management: .container, .volume, .network, .image files and their lifecycle",
+    "explicitly_out_of_scope": [
+      "han0 / router management",
+      "SELinux policy management (provisioning layer responsibility)",
+      "User/service account creation",
+      "Secret encryption (systemd-creds is an OS-layer concern)",
+      "OS image builds",
+      "Host directory creation beyond ExecStartPre mkdir for runtime dirs"
+    ],
+    "privilege_model": {
+      "quadctl_itself": "runs as operator user (handahl), no sudo",
+      "selinux_operations": "provisioning time, root — never quadctl",
+      "systemd_dispatch": "systemctl --user"
+    },
+    "multi_node": {
+      "targets": ["han3 (primary)", "han3-vps (Rocky 9)"],
+      "rocky9_compatibility": "prerequisite deltas expected to be version numbers only"
+    },
+    "implemented_commands": {
+      "observe": ["status [all]", "matrix", "tree", "shell", "doctor", "reload-daemon (rd)", "logs <unit>", "debug <unit>"],
+      "inspect": ["cat <unit>", "depends-on <unit>", "depended-by <unit>"],
+      "govern": ["audit", "migrate", "deploy [force]"],
+      "units": ["start", "stop", "restart", "enable", "disable", "mask", "unmask"]
+    },
+    "known_gaps": [
+      "edit intent <n> — declared in help text, not implemented",
+      "image sync / image audit — planned, not implemented",
+      "quadctl shell REPL — partial implementation",
+      "drift detection across all four layers — partial"
+    ],
+    "drift_detection": {
+      "layers": [
+        "git repo (declared intent)",
+        ".container/.volume/.network/.image files in runtime path",
+        "systemd unit state (generated by Quadlet generator)",
+        "running container state (podman ps)"
+      ],
+      "target_commands": ["quadctl matrix", "quadctl status"]
+    },
+    "audit_linting": {
+      "should_warn": [
+        "z/Z flags present in committed intent files",
+        "Secret=type=env for sensitive values (advisory, not blocking)",
+        "Missing .image file for a referenced image",
+        "AutoUpdate=registry combined with --pull=never",
+        "Image= references without hanlab- prefix where expected",
+        "Missing DropCapability=all",
+        "SecurityLabelDisable=true"
+      ],
+      "posture": "warn, not block — operator is sole decision-maker"
+    }
+  },
+
+  "ci_pipeline": {
+    "platform": "Forgejo Actions",
+    "status": "planned — runner not yet deployed",
+    "runner": {
+      "deployment": "single container on han3",
+      "socket_model": "sibling containers via rootless Podman socket passthrough",
+      "selinux": "udica-generated policy for Podman socket access",
+      "network": "runner-isolated.network, no route to hanlab-backend.network"
+    },
+    "registry": "Forgejo Container Registry at forge.handahl.org (OCI-compliant; serves container images and bootc OS images)",
+    "implementation_approach": "ad-hoc first — learn Actions YAML, label routing, and runner behavior before hardening"
+  },
+
+  "observability": {
+    "metrics": "Beszel (hub on han3, agents on all nodes including han0 via Entware)",
+    "logs": "Dozzle (per-container, lightweight)",
+    "philosophy": "lightweight composable single-purpose tools over monolithic stacks",
+    "health_checks": "HealthCmd via curl where available in container — curl availability per image to be documented during scaffolding research"
+  },
+
+  "services_in_scope": {
+    "han3": [
+      "Kanidm (OIDC first, then PAM/NSS, SSH key management)",
+      "Traefik",
+      "PostgreSQL 15+ with pgvector",
+      "Garage S3",
+      "Forgejo (forge + container registry)",
+      "Valkey",
+      "AdGuard Home",
+      "Beszel hub",
+      "Dozzle",
+      "Forgejo Runner (planned)"
+    ],
+    "han3-vps": "TBD — edge services; provider and location pending"
+  },
+
+  "philosophical_positions": {
+    "standard": "han-dynamic",
+    "living_organism": "The homelab changes frequently. Constraints exist to guide decisions and enable automated linting, not to create friction. Operator is sole decision-maker and final authority.",
+    "composability": "Single-purpose tools over monolithic solutions",
+    "immutability": "Prefer immutable base + layered configuration over mutable runtime state",
+    "secret_hygiene": "Secrets never touch disk unencrypted, never in git, never in Environment= if avoidable. Pragmatic exceptions acknowledged and documented.",
+    "selinux_posture": "SELinux is a first-class constraint. z/Z and audit2allow are development tools; tier 1/2 are the production target.",
+    "ad_hoc_vs_overcommit": "Start ad-hoc to learn the trade. Commit to architecture after understanding failure modes.",
+    "single_operator": "One human. This constrains tooling complexity, not security boundaries. Service-account isolation remains a valid goal, deferred pending Kanidm.",
+    "quadctl_philosophy": "quadctl manages intent. systemd executes intent. Podman runs workloads. These layers must not be conflated.",
+    "audit_posture": "Constraints inform quadctl audit warnings. Warnings inform the operator. The operator decides."
+  }
+}
