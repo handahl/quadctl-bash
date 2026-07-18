@@ -82,6 +82,75 @@ calc_uptime() {
 }
 
 # ------------------------------------------------------------------------------
+# _unit_drift_state <unit> <systemd-drift> <start-timestamp> <unit-type>
+# Computes composite drift state by comparing across three layers:
+#   src (intent) → deployed (Q_CONFIG_DIR) → running (container start time)
+#
+# Returns one of:
+#   no      — all layers in sync
+#   pending — src has edits not yet deployed (rsync not run)
+#   stale   — deployed differs from running (needs restart after deploy)
+#   drift   — both src-pending AND stale running
+#   reload  — systemd NeedDaemonReload (daemon-reload not yet run)
+# ------------------------------------------------------------------------------
+_unit_drift_state() {
+    local unit="$1"      # e.g. hanlab-foo.service
+    local sys_drift="$2" # yes/no from NeedDaemonReload
+    local s_ts="$3"      # ActiveEnterTimestamp string
+    local utype="$4"     # container | network | volume | ...
+
+    # NeedDaemonReload: unit file changed but daemon-reload not yet run
+    [[ "$sys_drift" == "yes" ]] && echo "reload" && return
+
+    # Non-container units: no further comparison needed
+    [[ "$utype" != "container" ]] && echo "no" && return
+
+    local stem="${unit%.service}"
+    local deployed_file="$Q_CONFIG_DIR/${stem}.container"
+    local src_file="$Q_SRC_DIR/${stem}.container"
+
+    # Layer 1: src vs deployed — content diff
+    local src_pending="no"
+    if [[ -f "$src_file" ]]; then
+        if [[ ! -f "$deployed_file" ]] || ! diff -q "$src_file" "$deployed_file" >/dev/null 2>&1; then
+            src_pending="yes"
+        fi
+    fi
+
+    # Layer 2: deployed vs running — mtime of deployed file vs container start epoch
+    local stale_running="no"
+    if [[ -f "$deployed_file" && -n "$s_ts" && "$s_ts" != "-" ]]; then
+        local deployed_mtime start_epoch
+        deployed_mtime=$(stat -c %Y "$deployed_file" 2>/dev/null) || deployed_mtime=0
+        start_epoch=$(date -d "$s_ts" +%s 2>/dev/null) || start_epoch=0
+        if (( deployed_mtime > 0 && start_epoch > 0 && deployed_mtime > start_epoch )); then
+            stale_running="yes"
+        fi
+    fi
+
+    if   [[ "$src_pending" == "yes" && "$stale_running" == "yes" ]]; then echo "drift"
+    elif [[ "$src_pending" == "yes" ]];  then echo "pending"
+    elif [[ "$stale_running" == "yes" ]]; then echo "stale"
+    else echo "no"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# _pad_colored <string> <width>
+# Pads a string that may contain ANSI escape codes to a given visual width.
+# printf's %-Ns counts escape bytes as width; this strips them for measurement
+# then appends the correct number of spaces so columns stay aligned.
+# ------------------------------------------------------------------------------
+_pad_colored() {
+    local s="$1" width="$2"
+    local plain
+    plain=$(printf '%s' "$s" | sed $'s/\033\\[[0-9;]*m//g')
+    local pad=$(( width - ${#plain} ))
+    printf '%s' "$s"
+    (( pad > 0 )) && printf '%*s' "$pad" "" || true
+}
+
+# ------------------------------------------------------------------------------
 # execute_matrix_view [standard|all]
 #
 # Standard (default): container units only — the operational view.
@@ -102,9 +171,9 @@ execute_matrix_view() {
     echo "quadctl"
 
     # 1. FETCH RUNTIME STATE
-    local sys_map pod_map
+    local sys_map containers_map
     sys_map=$(api_systemd_get_state_map)
-    pod_map=$(get_containers_map)
+    containers_map=$(get_containers_map)
 
     # 2. DISCOVER DISK INTENT
     # Map every quadlet file to its canonical systemd service name.
@@ -139,9 +208,9 @@ execute_matrix_view() {
     fi
 
     # 4. HEADER
-    printf "%-27s %-8s %-10s %-10s %-7s %-10s %-13s %s\n" \
+    printf "%-20s %-10s %-10s %-13s %-7s %-10s %-13s %s\n" \
         "UNITNAME" "DRIFT" "STATE" "SUB" "UPTIME" "HEALTH" "VERSION" "ROUTING"
-    printf '%0.s─' {1..108}; echo
+    printf '%0.s─' {1..116}; echo
 
     # 5. ITERATE — collect into typed buffers for ordered output
     local lines_containers=()
@@ -186,10 +255,16 @@ execute_matrix_view() {
         clean_name="${unit#"${Q_ARCH_PREFIX}"}"
         clean_name="${clean_name%.service}"
 
-        case "$s_drift" in
-            yes)  drift_disp="${Q_COLOR_YELLOW}drift${Q_COLOR_RESET}"  ;;
-            no)   drift_disp="${Q_COLOR_GREEN}synced${Q_COLOR_RESET}"  ;;
-            *)    drift_disp="-"                                        ;;
+        local drift_state
+        drift_state=$(_unit_drift_state "$unit" "$s_drift" "$s_ts" "$utype")
+
+        case "$drift_state" in
+            no)      drift_disp="${Q_COLOR_GREEN}synced${Q_COLOR_RESET}"   ;;
+            stale)   drift_disp="${Q_COLOR_YELLOW}stale${Q_COLOR_RESET}"   ;;
+            pending) drift_disp="${Q_COLOR_YELLOW}pending${Q_COLOR_RESET}" ;;
+            drift)   drift_disp="${Q_COLOR_YELLOW}drift${Q_COLOR_RESET}"   ;;
+            reload)  drift_disp="${Q_COLOR_RED}reload${Q_COLOR_RESET}"     ;;
+            *)       drift_disp="-"                                         ;;
         esac
 
         uptime_disp=$(calc_uptime "$s_ts")
@@ -207,23 +282,39 @@ execute_matrix_view() {
         local p_health="-" p_image="-" p_ports="-"
 
         if [[ "$utype" == "container" ]]; then
-            local pod_json
-            pod_json=$(echo "$pod_map" | jq -r \
+            local container_json
+            container_json=$(echo "$containers_map" | jq -r \
                 --arg n1 "${unit%.service}" \
                 --arg n2 "$clean_name" \
                 '.[$n1] // .[$n2] // empty' 2>/dev/null)
 
-            if [[ -n "$pod_json" ]]; then
-                local raw_status raw_image labels rule
-                raw_status=$(echo "$pod_json" | jq -r '.Status // ""')
-                raw_image=$(echo  "$pod_json" | jq -r '.Image  // ""')
-                labels=$(echo     "$pod_json" | jq -r '.Labels // {}')
+            if [[ -n "$container_json" ]]; then
+                local api_status raw_image labels rule
+                # libpod /libpod/containers/json: .Status = health state directly
+                # ("healthy", "unhealthy", "starting", or "" when no health check)
+                api_status=$(echo "$container_json" | jq -r '.Status // ""')
+                raw_image=$(echo  "$container_json" | jq -r '.Image  // ""')
+                labels=$(echo     "$container_json" | jq -r '.Labels // {}')
 
-                case "$raw_status" in
-                    *"(healthy)"*)   p_health="healthy"   ;;
-                    *"(unhealthy)"*) p_health="unhealthy" ;;
-                    *"(starting)"*)  p_health="starting"  ;;
-                    *)               p_health="n/a"       ;;
+                case "$api_status" in
+                    healthy|unhealthy|starting)
+                        p_health="$api_status" ;;
+                    *)
+                        # No health state from API — read deployed file to distinguish
+                        # n/a (no HealthCmd) from inactive (HealthCmd commented out)
+                        local deployed_file="$Q_CONFIG_DIR/${clean_name}.container"
+                        if [[ -f "$deployed_file" ]]; then
+                            if grep -qE '^[[:space:]]*#[[:space:]]*HealthCmd=' "$deployed_file" 2>/dev/null; then
+                                p_health="inactive"
+                            elif grep -qE '^[[:space:]]*HealthCmd=' "$deployed_file" 2>/dev/null; then
+                                p_health="starting"
+                            else
+                                p_health="n/a"
+                            fi
+                        else
+                            p_health="n/a"
+                        fi
+                        ;;
                 esac
 
                 if [[ "$raw_image" == *":"* ]]; then
@@ -233,24 +324,19 @@ execute_matrix_view() {
                     p_image="latest"
                 fi
 
-                # Traefik Host rule from container labels (file provider — not socket labels)
+                # Routing: read Label=org.hanlab.routing=<hostname> from quadlet file.
                 # Labels set via Label= in the quadlet file are present in the Podman API.
-                rule=$(echo "$labels" | jq -r '
-                    to_entries[]
-                    | select(.key | contains("routers"))
-                    | .value
-                    | capture("Host\\(`(?<host>[^`]+)`\\)")
-                    | .host
-                ' 2>/dev/null | head -n1)
+                rule=$(echo "$labels" | jq -r '."org.hanlab.routing" // empty' 2>/dev/null | head -n1)
 
                 if [[ -n "$rule" ]]; then
                     p_ports="● ${rule}"
                 else
                     local raw_ports
-                    raw_ports=$(echo "$pod_json" | jq -r '
+                    # libpod uses snake_case: host_port / container_port
+                    raw_ports=$(echo "$container_json" | jq -r '
                         .Ports // []
-                        | map(select(.hostPort)
-                              | "\(.hostPort):\(.containerPort)/\(.protocol)")
+                        | map(select(.host_port)
+                              | "\(.host_port):\(.container_port)/\(.protocol)")
                         | join(" ")
                     ' 2>/dev/null)
                     [[ -n "$raw_ports" ]] && p_ports="$raw_ports"
@@ -259,12 +345,14 @@ execute_matrix_view() {
         fi
 
         # --- RENDER ROW into buffer ---
+        # Pre-pad colored columns so printf %-Ns doesn't count escape bytes as width.
+        local drift_col state_col
+        drift_col=$(_pad_colored "$drift_disp" 10)
+        state_col=$(_pad_colored "${state_color}${s_active}${Q_COLOR_RESET}" 10)
+
         local rendered
-        # Reason: printf -v would be cleaner but doesn't handle embedded color resets
-        # portably across all printf implementations. Subshell capture is safe here.
-        rendered=$(printf "%-27s %-8s ${state_color}%-10s${Q_COLOR_RESET} %-10s %-7s %-10s %-13s %s\n" \
-            "$clean_name" "$drift_disp" "$s_active" "$s_sub" \
-            "$uptime_disp" "$p_health" "$p_image" "$p_ports")
+        rendered=$(printf "%-20s %s %s %-13s %-7s %-10s %-13s %s\n" \
+            "$clean_name" "$drift_col" "$state_col" "$s_sub" "$uptime_disp" "$p_health" "$p_image" "$p_ports")
 
         if [[ "$utype" == "container" ]]; then
             lines_containers+=("$rendered")
@@ -281,9 +369,9 @@ execute_matrix_view() {
 
     if [[ "$filter_type" == "all" && ${#lines_aux[@]} -gt 0 ]]; then
         echo ""
-        printf "${Q_COLOR_GREY}%-27s %-8s %-10s %-10s %-7s${Q_COLOR_RESET}\n" \
-            "  INFRASTRUCTURE" "DRIFT" "STATE" "SUB" "UPTIME"
-        printf '%0.s─' {1..108}; echo
+        printf "${Q_COLOR_GREY}%-20s %-10s %-10s %-13s %-7s${Q_COLOR_RESET}\n" \
+            "INFRASTRUCTURE" "DRIFT" "STATE" "SUB" "UPTIME"
+        printf '%0.s─' {1..113}; echo
         for line in "${lines_aux[@]}"; do
             echo "$line"
         done
